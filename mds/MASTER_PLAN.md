@@ -4,7 +4,7 @@
 - id: master_plan.saas
 - owner: product-manager
 - priority: critical
-- context_dependencies: { "manager": "MANAGER_AGENT.md", "conventions": "../../MD_CONVENTIONS.md" }
+- context_dependencies: { "manager": "../manager/MANAGER_AGENT.md", "conventions": "../MD_CONVENTIONS.md" }
 - last_checked: 2026-01-23T15:14:25+01:00
 <!-- content -->
 This document serves as the central strategic plan for the **Intelligent Control & Analysis Platform**. It is a dual-engine AI system functioning as both a **Business Analyst** and an **Autonomous Operator** for SMBs and industrial clients. It combines LLM reasoning (Analysis) with RL control (Optimization).

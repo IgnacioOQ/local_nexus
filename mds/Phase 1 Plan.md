@@ -4,7 +4,7 @@
 - id: implementation.phase1
 - owner: user
 - priority: critical
-- context_dependencies: { "master_plan": "../MASTER_PLAN.md", "conventions": "../../../MD_CONVENTIONS.md" }
+- context_dependencies: { "master_plan": "MASTER_PLAN.md", "conventions": "../MD_CONVENTIONS.md" }
 - last_checked: 2026-01-24T08:35:00+01:00
 <!-- content -->
 This document outlines the tactical execution plan for building the **Local Nexus**, the client-side application of the Intelligent Control SaaS.
@@ -21,7 +21,7 @@ This document outlines the tactical execution plan for building the **Local Nexu
 * **Agent Framework**: **Google ADK (Local Mode)**. Use the ADK pattern (Python functions + type hints) for "Mock tools" to ensure seamless transition to Phase 3.
 
 ## Project Initialization & Structure
-- status: todo
+- status: done
 - type: task
 - id: implementation.phase1.init
 - estimate: 1d
