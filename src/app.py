@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Add the project root directory to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
 import streamlit as st
 from src.components.sidebar import render_sidebar
 from src.components.chat import render_chat
