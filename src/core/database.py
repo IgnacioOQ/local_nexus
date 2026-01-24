@@ -15,7 +15,13 @@ class DatabaseManager:
 
     def _initialize_db(self):
         """Initialize the database connection and schema."""
-        self.conn = duckdb.connect(self.db_path)
+        try:
+            # Ensure data directory exists
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            self.conn = duckdb.connect(self.db_path)
+        except Exception as e:
+            print(f"WARNING: Failed to connect to {self.db_path} ({e}). Falling back to in-memory database.")
+            self.conn = duckdb.connect(":memory:")
         
         # Create Metadata Registry Table
         self.conn.execute("""
