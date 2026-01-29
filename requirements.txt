@@ -6,3 +6,11 @@ pydantic
 pytest
 google-generativeai
 python-dotenv
+
+# RAG dependencies (Phase 1)
+chromadb>=0.4.0
+sentence-transformers>=2.0.0
+
+# Optional: Document processing
+pypdf>=3.0.0
+python-docx>=0.8.0
