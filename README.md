@@ -3,7 +3,7 @@
 - context_dependencies: { "conventions": "MD_CONVENTIONS.md", "setup": "mds/PROJECT_SETUP.md", "master_plan": "mds/MASTER_PLAN.md", "agents": "AGENTS.md" }
 <!-- content -->
 
-**Local Nexus** is a privacy-first **Unified Intelligence Platform** that combines a **Data Warehouse** (DuckDB) with **RAG** (Retrieval-Augmented Generation) and an **Institutional Graph** to answer complex questions requiring both computation and semantic understanding.
+**Local Nexus** is a privacy-first **Unified Intelligence Platform** that provides a **Streamlit Chatbot Interface** to combine a **Data Warehouse** (DuckDB) with **RAG** (Retrieval-Augmented Generation) and an **Institutional Graph**, answering complex questions that require both computation and semantic understanding.
 
 > **Architecture**: Built on the **TAG (Table-Augmented Generation)** paradigm from Berkeley/Databricks research, unifying structured SQL queries with semantic document search.
 
@@ -47,6 +47,7 @@
 
 | Feature | Description |
 |:--------|:------------|
+| **Chatbot Interface** | Streamlit UI for natural language interaction and file management |
 | **Query Routing** | Automatically classifies questions as structured (SQL), unstructured (RAG), or hybrid |
 | **Text2SQL** | Converts natural language to DuckDB SQL with schema introspection |
 | **Smart Retrieval** | Query decomposition for complex multi-part questions with LRU caching |
@@ -58,11 +59,47 @@
 - status: active
 - type: context
 <!-- content -->
+*   **Interactive Chatbot**: A **Streamlit**-based interface (`src/app.py`) for chatting with your data, visualizing SQL results, and managing file uploads.
 *   **Data Warehouse (DuckDB)**: Ingests CSV/Excel/JSON into tables for SQL aggregations, joins, and filters.
 *   **Document Search (ChromaDB)**: Semantic search over TXT, MD, PDF, DOCX files for policies and concepts.
 *   **Graph Store**: Relationship traversal for organizational hierarchies and entity connections.
 *   **Unified Engine**: Routes queries to appropriate source(s) and synthesizes answers.
 *   **MCP Integration**: Expose all capabilities as agent tools via Model Context Protocol.
+
+## MCP Protocol (Agent Tools)
+- status: active
+- type: context
+<!-- content -->
+
+The **Model Context Protocol (MCP)** server exposes all Unified Nexus capabilities to LLM agents, enabling programmatic access to structured data, documents, and relationships.
+
+### Available Tools
+
+| Tool | Category | Purpose |
+|:-----|:---------|:--------|
+| `unified_query` | Query | Answer questions using automatic routing |
+| `classify_query` | Query | Classify query type without execution |
+| `execute_sql` | Structured | Execute SQL directly against DuckDB |
+| `list_tables` | Structured | List available tables with row counts |
+| `describe_table` | Structured | Get schema, types, and sample data |
+| `semantic_search` | Unstructured | Search documents by meaning |
+| `list_document_sources` | Unstructured | List ingested document sources |
+| `find_connections` | Graph | Find paths between entities |
+| `get_neighbors` | Graph | Get directly connected entities |
+| `ingest_document` | Ingestion | Add documents to vector store |
+| `get_system_status` | System | Check component health |
+| `clear_cache` | System | Clear query decomposition cache |
+
+### Usage
+
+```bash
+# Run as MCP server (for LLM integration)
+python -m src.mcp.server
+
+# Or use tools directly in Python
+from src.mcp.server import call_tool_sync
+result = call_tool_sync("unified_query", question="What are total sales?")
+```
 
 ## Data Ingestion Pipeline
 - status: active
