@@ -5,7 +5,7 @@ from src.core.database import DatabaseManager
 
 def get_unified_engine():
     """Get or create the unified engine instance."""
-    if "unified_engine" not in st.session_state:
+    if "unified_engine" not in st.session_state or st.session_state.unified_engine is None:
         try:
             from src.core.unified_engine import UnifiedEngine
             from src.core.llm import init_gemini
@@ -146,7 +146,9 @@ def generate_unified_response(prompt: str) -> dict:
 
     with st.spinner("Analyzing query..."):
         try:
+            print(f"DEBUG: calling engine.query with prompt: {prompt}")
             result = engine.query(prompt)
+            print(f"DEBUG: engine.query returned: {result}")
 
             if result.error:
                 return {
