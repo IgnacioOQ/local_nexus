@@ -4,12 +4,13 @@ Unified RAG Engine for Local Nexus.
 This module orchestrates retrieval from multiple sources:
 - VectorStore (ChromaDB) for unstructured document search
 - Text2SQL (DuckDB) for structured data queries
+- KnowledgeGraphMetadata for query expansion and guided retrieval
 - Hybrid queries combining both sources
 
 Key Features:
 1. Smart Retrieval (Query Decomposition) - breaks complex questions into sub-queries
 2. Batch Vector Search - 82% latency reduction via parallel queries
-3. Graph Context - augments answers with organizational knowledge
+3. KG-Guided Retrieval - expands queries based on entity-data links
 
 Inspired by mcmp_chatbot RAGEngine patterns.
 """
@@ -47,6 +48,7 @@ class UnifiedEngine:
     Features:
     - Query decomposition with LRU caching for complex questions
     - Multi-source retrieval (VectorStore + DuckDB)
+    - KG-guided query expansion for finding related sources
     - Batch vector search for 82% latency reduction
     - Context assembly for LLM response generation
     - Deduplication of retrieved content
@@ -55,6 +57,7 @@ class UnifiedEngine:
         engine = UnifiedEngine(
             vector_store=vs,
             db_connection=conn,
+            kg_metadata=kg,
             llm_func=my_llm_function
         )
         response = engine.query("What are the total sales?")
@@ -64,6 +67,7 @@ class UnifiedEngine:
         self,
         vector_store=None,
         db_connection=None,
+        kg_metadata=None,
         llm_func: Optional[Callable[[str], str]] = None,
         enable_decomposition: bool = True,
         max_context_tokens: int = 4000
@@ -74,12 +78,14 @@ class UnifiedEngine:
         Args:
             vector_store: VectorStore instance for document retrieval
             db_connection: DuckDB connection for SQL queries
+            kg_metadata: KnowledgeGraphMetadata for query expansion
             llm_func: Function for LLM calls (prompt: str) -> str
             enable_decomposition: Whether to decompose complex queries
             max_context_tokens: Approximate max tokens for context (chars/4)
         """
         self.vector_store = vector_store
         self.db_connection = db_connection
+        self.kg_metadata = kg_metadata
         self.llm_func = llm_func
         self.enable_decomposition = enable_decomposition
         self.max_context_chars = max_context_tokens * 4  # Rough estimate
@@ -217,15 +223,29 @@ If no decomposition needed, return the original question."""
         except Exception as e:
             return []
 
-    def _retrieve_from_sql(self, question: str) -> list[RetrievalResult]:
+    def _retrieve_from_sql(
+        self, 
+        question: str,
+        table_hints: Optional[list[str]] = None
+    ) -> list[RetrievalResult]:
         """
         Retrieve data from DuckDB via Text2SQL.
+        
+        Args:
+            question: Natural language question
+            table_hints: Optional list of table names suggested by KG
         """
         if not self.text2sql:
             return []
 
         try:
-            result = self.text2sql.query(question)
+            # Expand question with table hints from KG
+            expanded_question = question
+            if table_hints:
+                hint_text = ", ".join(table_hints)
+                expanded_question = f"{question} (Consider tables: {hint_text})"
+            
+            result = self.text2sql.query(expanded_question)
 
             if not result.success:
                 return [RetrievalResult(
@@ -286,6 +306,8 @@ If no decomposition needed, return the original question."""
         """
         Retrieve relevant information based on query type.
 
+        Uses KG metadata layer to expand queries before retrieval.
+
         Args:
             question: User's natural language question
             top_k: Number of results per source
@@ -303,21 +325,40 @@ If no decomposition needed, return the original question."""
             classification = self.router.classify(question)
             query_type = classification.value
 
+        # ★ KG-Guided Query Expansion ★
+        # Expand query using Knowledge Graph before retrieval
+        retrieval_plan = None
+        sql_hints = []
+        extra_vector_queries = []
+        
+        if self.kg_metadata:
+            retrieval_plan = self.kg_metadata.expand_query(question, query_type)
+            sql_hints = retrieval_plan.sql_hints
+            extra_vector_queries = retrieval_plan.vector_queries[1:]  # Skip original query
+            
+            # Upgrade to hybrid if KG found SQL-related links for unstructured query
+            if retrieval_plan.expanded and sql_hints and query_type == 'unstructured':
+                query_type = 'hybrid'
+                print(f"DEBUG: KG expanded to hybrid, sql_hints={sql_hints}")
+
         results = []
 
         if query_type == 'structured':
-            results = self._retrieve_from_sql(question)
+            results = self._retrieve_from_sql(question, table_hints=sql_hints)
 
         elif query_type == 'unstructured':
             # Decompose and retrieve using batch queries (82% latency improvement)
             sub_queries = list(self.decompose_query(question))
-            results = self._retrieve_from_vector_store(sub_queries, top_k)
+            # Add KG-suggested queries
+            all_queries = sub_queries + extra_vector_queries
+            results = self._retrieve_from_vector_store(all_queries, top_k)
 
         elif query_type == 'hybrid':
             # Get both types of results
             sub_queries = list(self.decompose_query(question))
-            vector_results = self._retrieve_from_vector_store(sub_queries, top_k)
-            sql_results = self._retrieve_from_sql(question)
+            all_queries = sub_queries + extra_vector_queries
+            vector_results = self._retrieve_from_vector_store(all_queries, top_k)
+            sql_results = self._retrieve_from_sql(question, table_hints=sql_hints)
             results = vector_results + sql_results
 
         return query_type, results
@@ -465,6 +506,13 @@ ANSWER:"""
             try:
                 tables = self.text2sql.get_available_tables()
                 stats['available_tables'] = tables
+            except Exception:
+                pass
+
+        if self.kg_metadata:
+            try:
+                kg_stats = self.kg_metadata.get_stats()
+                stats['kg_metadata'] = kg_stats
             except Exception:
                 pass
 

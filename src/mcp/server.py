@@ -1,13 +1,13 @@
 """
 MCP Server: Local Nexus Client Agent
 
-Exposes the Unified Nexus Architecture (RAG + Data Warehouse + Graph)
+Exposes the Unified Nexus Architecture (RAG + Data Warehouse + KG)
 to LLM agents via MCP for local question answering.
 
 Components:
   - DuckDB: Structured data queries (Text2SQL)
   - ChromaDB: Unstructured document search (RAG)
-  - Graph Store: Relationship traversal
+  - Knowledge Graph: Query expansion and entity linking
   - Unified Engine: Query routing and answer synthesis
 
 Usage:
@@ -41,7 +41,7 @@ except ImportError:
 CONFIG = {
     "db_path": "data/warehouse.db",
     "vector_store_path": "data/vectordb",
-    "graph_store_path": "data/graph",
+    "kg_store_path": "data/kg",
 }
 
 
@@ -70,11 +70,11 @@ def get_engine():
         except ImportError:
             pass
 
-        # Initialize graph store
-        graph_store = None
+        # Initialize Knowledge Graph Metadata
+        kg_metadata = None
         try:
-            from src.core.graph_store import InstitutionalGraph
-            graph_store = InstitutionalGraph(storage_path=CONFIG["graph_store_path"])
+            from src.core.kg_metadata import KnowledgeGraphMetadata
+            kg_metadata = KnowledgeGraphMetadata(storage_path=CONFIG["kg_store_path"])
         except Exception:
             pass
 
@@ -98,7 +98,7 @@ def get_engine():
         _engine = UnifiedEngine(
             vector_store=vector_store,
             db_connection=db.get_connection(),
-            graph_store=graph_store,
+            kg_metadata=kg_metadata,
             llm_func=llm_func
         )
 
@@ -135,8 +135,9 @@ def register_tool(name: str, description: str, input_schema: Dict[str, Any]):
 Automatically routes to appropriate data source(s):
 - STRUCTURED: SQL over DuckDB (counts, sums, aggregations)
 - UNSTRUCTURED: Semantic search over documents (policies, concepts)
-- GRAPH: Relationship traversal (connections, paths)
 - HYBRID: Combines sources when needed
+
+The Knowledge Graph expands queries by finding related tables/documents.
 
 This is your primary tool for answering user questions about data.""",
     input_schema={
@@ -397,97 +398,233 @@ async def list_document_sources() -> Dict[str, Any]:
 
 
 # =============================================================================
-# Graph Data Tools
+# Knowledge Graph Tools
 # =============================================================================
 
+# Helper to get KG instance
+def _get_kg():
+    """Get KnowledgeGraphMetadata instance."""
+    engine = get_engine()
+    return engine.kg_metadata
+
+
 @register_tool(
-    name="find_connections",
-    description="""Find paths connecting two entities in the graph.
+    name="kg_get_related",
+    description="""Get all sources (tables/documents) linked to an entity.
 
 Use for questions like:
-- "How is customer X related to product Y?"
-- "What's the connection between these departments?"
-- "Who connects Alice to Bob?"
+- "What data sources are related to Alice Chen?"
+- "What tables mention this project?"
 
-Returns paths with intermediate nodes and relationship types.""",
+Returns linked nodes with relationship types.""",
     input_schema={
         "type": "object",
         "properties": {
-            "from_entity": {"type": "string", "description": "Starting entity name or ID"},
-            "to_entity": {"type": "string", "description": "Target entity name or ID"},
-            "max_depth": {"type": "integer", "description": "Maximum path length", "default": 3}
+            "entity_name": {"type": "string", "description": "Entity name to find relations for"}
         },
-        "required": ["from_entity", "to_entity"]
+        "required": ["entity_name"]
     }
 )
-async def find_connections(from_entity: str, to_entity: str, max_depth: int = 3) -> Dict[str, Any]:
-    """Find paths between entities."""
-    engine = get_engine()
+async def kg_get_related(entity_name: str) -> Dict[str, Any]:
+    """Get sources linked to an entity."""
+    kg = _get_kg()
+    
+    if not kg:
+        return {"status": "error", "error": "Knowledge Graph not configured"}
+    
+    # Find entity node
+    entity_node = kg._find_node_by_name(entity_name, node_type='entity')
+    if not entity_node:
+        # Try adding as new entity
+        return {
+            "status": "not_found",
+            "message": f"Entity '{entity_name}' not found in Knowledge Graph",
+            "suggestion": "Use kg_list_entities to see available entities"
+        }
+    
+    related = kg.get_related_sources(entity_node.id)
+    
+    return {
+        "status": "success",
+        "entity": entity_name,
+        "related_sources": [
+            {
+                "id": node.id,
+                "name": node.name,
+                "type": node.type,
+                "source": node.source
+            }
+            for node in related
+        ]
+    }
 
-    if not engine.graph_store:
-        return {"status": "error", "error": "Graph store not configured"}
 
-    path = engine.graph_store.find_path(from_entity, to_entity, max_depth)
+@register_tool(
+    name="kg_find_path",
+    description="""Find connection path between two nodes in the Knowledge Graph.
 
+Use for questions like:
+- "How is customer X related to product Y?"
+- "What connects this document to that table?"
+
+Returns the shortest path if one exists.""",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "from_node": {"type": "string", "description": "Starting node name"},
+            "to_node": {"type": "string", "description": "Target node name"},
+            "max_depth": {"type": "integer", "description": "Maximum path length", "default": 3}
+        },
+        "required": ["from_node", "to_node"]
+    }
+)
+async def kg_find_path(from_node: str, to_node: str, max_depth: int = 3) -> Dict[str, Any]:
+    """Find path between two nodes."""
+    kg = _get_kg()
+    
+    if not kg:
+        return {"status": "error", "error": "Knowledge Graph not configured"}
+    
+    # Find source node
+    source = kg._find_node_by_name(from_node)
+    target = kg._find_node_by_name(to_node)
+    
+    if not source:
+        return {"status": "not_found", "message": f"Node '{from_node}' not found"}
+    if not target:
+        return {"status": "not_found", "message": f"Node '{to_node}' not found"}
+    
+    path = kg.find_path(source.id, target.id, max_depth)
+    
     if path:
+        # Resolve IDs to names
+        path_names = [kg.nodes[node_id].name for node_id in path if node_id in kg.nodes]
         return {
             "status": "success",
-            "path": path,
+            "path": path_names,
             "path_length": len(path) - 1
         }
     else:
         return {
-            "status": "not_found",
-            "message": f"No path found between '{from_entity}' and '{to_entity}' within {max_depth} hops"
+            "status": "no_path",
+            "message": f"No path found between '{from_node}' and '{to_node}' within {max_depth} hops"
         }
 
 
 @register_tool(
-    name="get_neighbors",
-    description="""Get entities directly connected to a given entity.
-
-Use for exploring local relationships and understanding entity context.""",
+    name="kg_list_entities",
+    description="List all known entities in the Knowledge Graph.",
     input_schema={
         "type": "object",
         "properties": {
-            "entity_id": {"type": "string", "description": "Entity name or ID"},
-            "relationship": {"type": "string", "description": "Filter by relationship type"},
-            "direction": {"type": "string", "enum": ["outgoing", "incoming", "both"], "default": "both"}
-        },
-        "required": ["entity_id"]
+            "limit": {"type": "integer", "description": "Maximum entities to return", "default": 20}
+        }
     }
 )
-async def get_neighbors(entity_id: str, relationship: str = None, direction: str = "both") -> Dict[str, Any]:
-    """Get neighboring entities."""
-    engine = get_engine()
-
-    if not engine.graph_store:
-        return {"status": "error", "error": "Graph store not configured"}
-
-    result = engine.graph_store.traverse(entity_id, relationship, direction, max_depth=1)
-
-    neighbors = []
-    for node in result.nodes:
-        if node.id != entity_id:
-            neighbors.append({
-                "id": node.id,
-                "name": node.name,
-                "type": node.type
-            })
-
-    relationships = []
-    for edge in result.edges:
-        relationships.append({
-            "from": edge.source_id,
-            "to": edge.target_id,
-            "type": edge.relationship
-        })
-
+async def kg_list_entities(limit: int = 20) -> Dict[str, Any]:
+    """List all known entities."""
+    kg = _get_kg()
+    
+    if not kg:
+        return {"status": "error", "error": "Knowledge Graph not configured"}
+    
+    entities = kg.search_nodes("", node_type="entity", limit=limit)
+    stats = kg.get_stats()
+    
     return {
         "status": "success",
-        "entity": entity_id,
-        "neighbors": neighbors,
-        "relationships": relationships
+        "total_nodes": stats.get("node_count", 0),
+        "total_edges": stats.get("edge_count", 0),
+        "entities": [
+            {"name": e.name, "type": e.properties.get("entity_type", "unknown")}
+            for e in entities
+        ]
+    }
+
+
+@register_tool(
+    name="kg_add_link",
+    description="""Create a relationship between two nodes.
+
+Use to manually link entities to tables/documents.
+Example: Link "Alice Chen" to "budgets" table with "manages" relationship.""",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "source_name": {"type": "string", "description": "Source node name"},
+            "target_name": {"type": "string", "description": "Target node name"},
+            "relationship": {"type": "string", "description": "Relationship type (e.g., manages, references, describes)"}
+        },
+        "required": ["source_name", "target_name", "relationship"]
+    }
+)
+async def kg_add_link(source_name: str, target_name: str, relationship: str) -> Dict[str, Any]:
+    """Create a relationship between nodes."""
+    kg = _get_kg()
+    
+    if not kg:
+        return {"status": "error", "error": "Knowledge Graph not configured"}
+    
+    # Find or create source node
+    source = kg._find_node_by_name(source_name)
+    if not source:
+        # Create as entity
+        source = kg.add_entity_node(source_name)
+    
+    # Find target node
+    target = kg._find_node_by_name(target_name)
+    if not target:
+        return {"status": "not_found", "message": f"Target node '{target_name}' not found"}
+    
+    edge = kg.link(source.id, target.id, relationship)
+    
+    if edge:
+        return {
+            "status": "success",
+            "message": f"Created link: {source_name} --[{relationship}]--> {target_name}",
+            "edge_id": edge.id
+        }
+    else:
+        return {
+            "status": "error",
+            "error": "Failed to create link"
+        }
+
+
+@register_tool(
+    name="kg_search",
+    description="Search the Knowledge Graph by name or type.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query (name substring)"},
+            "node_type": {"type": "string", "description": "Filter by type (entity, table, document, topic)"},
+            "limit": {"type": "integer", "description": "Max results", "default": 10}
+        },
+        "required": ["query"]
+    }
+)
+async def kg_search(query: str, node_type: str = None, limit: int = 10) -> Dict[str, Any]:
+    """Search nodes in the Knowledge Graph."""
+    kg = _get_kg()
+    
+    if not kg:
+        return {"status": "error", "error": "Knowledge Graph not configured"}
+    
+    results = kg.search_nodes(query, node_type=node_type, limit=limit)
+    
+    return {
+        "status": "success",
+        "query": query,
+        "results": [
+            {
+                "id": node.id,
+                "name": node.name,
+                "type": node.type,
+                "source": node.source
+            }
+            for node in results
+        ]
     }
 
 
@@ -556,7 +693,7 @@ async def get_system_status() -> Dict[str, Any]:
         "components": {
             "vector_store": stats.get("has_vector_store", False),
             "database": stats.get("has_db_connection", False),
-            "graph_store": stats.get("has_graph_store", False),
+            "knowledge_graph": stats.get("kg_metadata") is not None,
             "llm": stats.get("has_llm", False)
         },
         "details": stats

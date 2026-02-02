@@ -30,7 +30,13 @@ def get_llm_func():
         return gemini_call
     return None
 
-def get_engine_instance(use_vector: bool, use_db: bool, use_llm: bool):
+@st.cache_resource
+def get_kg_metadata():
+    """Cached Knowledge Graph Metadata."""
+    from src.core.kg_metadata import KnowledgeGraphMetadata
+    return KnowledgeGraphMetadata(storage_path="data/kg")
+
+def get_engine_instance(use_vector: bool, use_db: bool, use_kg: bool, use_llm: bool):
     """
     Get Unified Engine instance with dynamic component selection.
     
@@ -49,12 +55,20 @@ def get_engine_instance(use_vector: bool, use_db: bool, use_llm: bool):
                 vector_store = get_vector_store()
             except Exception:
                 pass
+        
+        kg_metadata = None
+        if use_kg:
+            try:
+                kg_metadata = get_kg_metadata()
+            except Exception as e:
+                print(f"KG load error: {e}")
             
         llm_func = get_llm_func() if use_llm else None
 
         engine = UnifiedEngine(
             vector_store=vector_store,
             db_connection=db_conn,
+            kg_metadata=kg_metadata,
             llm_func=llm_func
         )
         return engine
@@ -62,9 +76,9 @@ def get_engine_instance(use_vector: bool, use_db: bool, use_llm: bool):
         print(f"ERROR: UnifiedEngine initialization failed: {e}")
         return None
 
-def get_unified_engine(use_vector=True, use_db=True, use_llm=True):
+def get_unified_engine(use_vector=True, use_db=True, use_kg=True, use_llm=True):
     """Wrapper to get the engine with specific flags."""
-    return get_engine_instance(use_vector, use_db, use_llm)
+    return get_engine_instance(use_vector, use_db, use_kg, use_llm)
 
 
 def render_chat():
@@ -80,14 +94,10 @@ def render_chat():
     st.sidebar.markdown("### Unified Engine Components")
     use_vector = st.sidebar.toggle("Vector Store (RAG)", value=True, help="Search documents (ChromaDB)")
     use_db = st.sidebar.toggle("Structured Data (SQL)", value=True, help="Query database (DuckDB)")
+    use_kg = st.sidebar.toggle("Knowledge Graph", value=True, help="Query expansion via entity links")
     use_llm = st.sidebar.toggle("LLM Synthesis", value=True, help="Generate answers with Gemini")
     
-    # Global toggle state (implicitly ON if any component is ON, effectively)
-    # But user asked for a "Unified Engine" toggle that activates if all are on...
-    # Actually simpler: The old "generate_unified_response" will just use these flags.
-    # We can keep a "Mode" switch? 
-    # Let's trust the components toggles. If at least one is ON, we use the engine.
-    
+    # Use unified engine if at least one data source is enabled
     use_unified = use_vector or use_db
 
     # Display chat messages
@@ -122,7 +132,8 @@ def render_chat():
                 response = generate_unified_response(
                     prompt, 
                     use_vector=use_vector, 
-                    use_db=use_db, 
+                    use_db=use_db,
+                    use_kg=use_kg,
                     use_llm=use_llm
                 )
             else:
@@ -163,9 +174,9 @@ def render_query_badge(query_type: str):
     st.caption(f"Query type: **{label}**")
 
 
-def generate_unified_response(prompt: str, use_vector=True, use_db=True, use_llm=True) -> dict:
+def generate_unified_response(prompt: str, use_vector=True, use_db=True, use_kg=True, use_llm=True) -> dict:
     """Generate response using the Unified Engine."""
-    engine = get_unified_engine(use_vector, use_db, use_llm)
+    engine = get_unified_engine(use_vector, use_db, use_kg, use_llm)
 
     if not engine:
         return {

@@ -9,13 +9,16 @@ def render_sidebar():
         st.title("Local Nexus")
 
         # Tabs for different data types
-        tab1, tab2 = st.tabs(["Tables", "Documents"])
+        tab1, tab2, tab3 = st.tabs(["Tables", "Documents", "Knowledge Graph"])
 
         with tab1:
             render_structured_data_section()
 
         with tab2:
             render_document_section()
+
+        with tab3:
+            render_kg_section()
 
         st.divider()
         render_system_stats()
@@ -119,6 +122,40 @@ def render_document_section():
     except Exception:
         st.info("No documents ingested yet.")
 
+
+def render_kg_section():
+    """Render Knowledge Graph Metadata information."""
+    st.subheader("Knowledge Graph")
+    
+    try:
+        from src.core.kg_metadata import KnowledgeGraphMetadata
+        kg = KnowledgeGraphMetadata(storage_path="data/kg")
+        stats = kg.get_stats()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Nodes", stats.get("node_count", 0))
+        with col2:
+            st.metric("Edges", stats.get("edge_count", 0))
+        
+        # Show node type breakdown
+        node_types = stats.get("node_types", {})
+        if node_types:
+            st.caption("Node types:")
+            for ntype, count in node_types.items():
+                st.caption(f"  • {ntype}: {count}")
+        
+        # Show entities
+        entities = kg.search_nodes("", node_type="entity", limit=5)
+        if entities:
+            st.caption("Recent entities:")
+            for entity in entities:
+                st.caption(f"  • {entity.name}")
+        else:
+            st.caption("No entities linked yet.")
+            
+    except Exception as e:
+        st.info("Knowledge Graph not configured.")
 
 
 def render_system_stats():
