@@ -2,7 +2,7 @@
 - status: active
 - type: plan
 - id: unified-nexus
-- last_checked: 2025-01-27
+- last_checked: 2026-02-02
 <!-- content -->
 This document proposes an architecture that unifies **RAG (Retrieval-Augmented Generation)** for unstructured data with **Data Warehouse + Text2SQL** for structured data. The result is a system that can answer questions requiring both semantic understanding and precise computation.
 
@@ -113,6 +113,7 @@ graph TD
 - type: context
 - id: unified-nexus.architecture.components
 <!-- content -->
+
 | Component | Technology | Purpose |
 |:----------|:-----------|:--------|
 | **Document Store** | ChromaDB | Vector embeddings for semantic search |
@@ -1292,6 +1293,7 @@ Examples of using the unified system.
 - type: context
 - last_checked: 2026-01-27
 <!-- content -->
+
 ```python
 from src.core.unified_engine import UnifiedEngine
 import google.generativeai as genai
@@ -1323,7 +1325,6 @@ engine = UnifiedEngine(
 - type: context
 - last_checked: 2026-01-27
 <!-- content -->
-
 # Structured query (routes to Text2SQL)
 - id: structured_query_routes_to_text2sql
 - status: active
@@ -1358,6 +1359,7 @@ print(result['answer'])
 - type: context
 - last_checked: 2026-01-27
 <!-- content -->
+
 ```python
 from src.core.document_ingestion import DocumentIngester
 from src.core.vector_store import VectorStore
@@ -1496,6 +1498,7 @@ Graph data represents **relationships** between entities—something that neithe
 - type: context
 - id: unified-nexus.graphs.rationale
 <!-- content -->
+
 | Data Type | Best For | Limitations |
 |:----------|:---------|:------------|
 | **Tables (SQL)** | Aggregations, filters, joins on known schemas | Poor at variable-depth relationships |
@@ -1512,6 +1515,7 @@ Graph data represents **relationships** between entities—something that neithe
 - type: context
 - id: unified-nexus.graphs.approaches
 <!-- content -->
+
 | Approach | Complexity | Cost | Best For | Recommendation |
 |:---------|:-----------|:-----|:---------|:---------------|
 | **Text Serialization** | Low | Free | Simple graphs, prototyping | ⭐ Start here |
@@ -1527,6 +1531,7 @@ Graph data represents **relationships** between entities—something that neithe
 - type: guideline
 - id: unified-nexus.graphs.recommended
 <!-- content -->
+
 For a **cheap and feasible** implementation that fits with Local Nexus, I recommend a **tiered approach**:
 
 1. **Tier 1 (Immediate)**: Text serialization + structured prompting
@@ -1542,6 +1547,7 @@ Most SMB use cases will be fully served by Tier 1 and Tier 2.
 - priority: high
 - estimate: 1h
 <!-- content -->
+
 Serialize graph structures into LLM-friendly text. The LLM can reason about relationships directly from text descriptions.
 
 **Serialization Formats**:
@@ -1790,12 +1796,12 @@ Answer:"""
 - priority: high
 - estimate: 30m
 <!-- content -->
+
 Represent graph state within your existing MD conventions. This integrates naturally with your agent protocol.
 
 **Format Example**:
 
 ```markdown
-
 ## Entity Graph
 - status: active
 - type: context
@@ -1944,6 +1950,7 @@ def graph_to_md_tables(nodes: list[dict], edges: list[dict]) -> str:
 - priority: medium
 - estimate: 2h
 <!-- content -->
+
 Store graph data in DuckDB tables and use recursive CTEs for traversal. This keeps everything in one database and integrates with your existing Text2SQL.
 
 **Schema**:
@@ -2208,6 +2215,7 @@ class DuckDBGraphStore:
 - priority: low
 - estimate: 1h
 <!-- content -->
+
 Use NetworkX for graph algorithms (centrality, communities, paths) and convert results to text for the LLM.
 
 ```python
@@ -2347,6 +2355,7 @@ class GraphAnalyzer:
 - priority: low
 - estimate: 4h
 <!-- content -->
+
 Microsoft's GraphRAG builds a knowledge graph FROM documents, then uses community detection to create hierarchical summaries. This is excellent for answering synthesis questions across many documents.
 
 **When to use**: You have many documents and need to answer "global" questions like "What are the main themes across all our customer feedback?"
@@ -2500,6 +2509,7 @@ Extract only clearly stated facts. Be conservative."""
 - priority: low
 - estimate: 3h
 <!-- content -->
+
 For large-scale graph needs, use Neo4j with an MCP server. This lets your agents query a full graph database programmatically.
 
 **When to use**: 
@@ -2550,6 +2560,7 @@ For large-scale graph needs, use Neo4j with an MCP server. This lets your agents
 - estimate: 2h
 - blocked_by: [unified-nexus.graphs.duckdb]
 <!-- content -->
+
 Update the unified engine to include a graph retrieval path.
 
 **Updated Architecture**:
@@ -2588,13 +2599,13 @@ Update the unified engine to include a graph retrieval path.
 **Updated Query Router**:
 
 ```python
-
 # Add to QueryRouter class
 - id: add_to_queryrouter_class
 - status: active
 - type: context
 - last_checked: 2026-01-27
 <!-- content -->
+
 GRAPH_KEYWORDS = {
     'connected', 'relationship', 'related to', 'path', 'network',
     'linked', 'between', 'influence', 'depends on', 'dependency',
@@ -2660,6 +2671,7 @@ def _retrieve_graph(self, question: str) -> dict:
 - type: guideline
 - id: unified-nexus.graphs.summary
 <!-- content -->
+
 **For Local Nexus (SMB focus, cost-sensitive)**:
 
 | Phase | Approach | Effort | Cost |
@@ -2697,18 +2709,1495 @@ Given your focus on **cheap and feasible**:
 
 This gives you 80% of the value with 20% of the complexity.
 
+## Knowledge Graph Data Mapping
+- status: active
+- type: plan
+- id: unified-nexus.kg-data-mapping
+- last_checked: 2026-02-02
+<!-- content -->
+The existing architecture defines three retrieval paths (embeddings, SQL, graphs), but treats them as independent silos that only converge at the Context Assembly stage. This section introduces a **Knowledge Graph Data Mapping** layer that models the relationships *between* the three data modalities themselves, enabling cross-modal queries such as:
+
+- "Show me all documents mentioning entities connected to Supplier X in the graph" (graph → embeddings)
+- "What's the total revenue for all companies in the same community as our top partner?" (graph → SQL)
+- "Build a relationship map from all people mentioned in our compliance documents" (embeddings → graph)
+
+### The Cross-Modal Problem
+- status: active
+- type: context
+- id: unified-nexus.kg-data-mapping.problem
+- last_checked: 2026-02-02
+<!-- content -->
+Without explicit cross-modal links, the system has a blind spot: it can retrieve data from each store independently, but cannot follow references *across* stores. Consider this example:
+
+```
+User: "What's the revenue impact of the suppliers in our risk network?"
+
+Current system:
+  1. Graph store → finds the risk network subgraph (supplier nodes)
+  2. SQL store  → has revenue tables (but doesn't know which suppliers matter)
+  3. RAG store  → has risk assessment docs (but can't join to revenue)
+
+  Problem: Step 1 produces node IDs, but steps 2 and 3 can't consume them.
+```
+
+The Knowledge Graph Data Mapping layer solves this by maintaining a **unified entity registry** that links entity references across all three stores.
+
+### Unified Entity Registry
+- status: todo
+- type: task
+- id: unified-nexus.kg-data-mapping.entity-registry
+- priority: high
+- estimate: 3h
+- blocked_by: [unified-nexus.graphs.duckdb, unified-nexus.implementation.phase1]
+- last_checked: 2026-02-02
+<!-- content -->
+The entity registry is the backbone of cross-modal linking. It maps a canonical entity to its representations across the three data stores.
+
+**Conceptual Model**:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Unified Entity Registry                    │
+│                                                             │
+│  Entity: "Acme Corp"                                        │
+│  ├── graph_node_id:  "ORG_acme_corp"                        │
+│  ├── sql_references: [suppliers.name = 'Acme Corp',         │
+│  │                     orders.supplier_id = 'SUP-042']      │
+│  ├── embedding_refs: [chunk_ids: ['a3f2...', 'b7c1...']]   │
+│  └── aliases:        ['Acme', 'ACME Corporation', 'Acme Co']│
+│                                                             │
+│  Entity: "Alice Chen"                                       │
+│  ├── graph_node_id:  "P001"                                 │
+│  ├── sql_references: [employees.id = 'EMP-101']             │
+│  ├── embedding_refs: [chunk_ids: ['d4e5...']]               │
+│  └── aliases:        ['A. Chen', 'Alice']                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**DuckDB Schema** (extends the existing `graph_nodes` / `graph_edges` tables):
+
+```sql
+-- Canonical entity registry: one row per real-world entity
+CREATE TABLE IF NOT EXISTS entity_registry (
+    entity_id       VARCHAR PRIMARY KEY,       -- Canonical ID (e.g. 'ORG_acme_corp')
+    entity_type     VARCHAR NOT NULL,          -- Person | Organization | Product | Concept | Location
+    canonical_name  VARCHAR NOT NULL,          -- Display name
+    aliases         JSON    DEFAULT '[]',      -- Alternative surface forms
+    metadata        JSON    DEFAULT '{}',      -- Arbitrary properties
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Links from entities to their SQL table/column references
+CREATE TABLE IF NOT EXISTS entity_sql_links (
+    entity_id       VARCHAR REFERENCES entity_registry(entity_id),
+    table_name      VARCHAR NOT NULL,          -- e.g. 'suppliers'
+    column_name     VARCHAR NOT NULL,          -- e.g. 'name'
+    column_value    VARCHAR NOT NULL,          -- e.g. 'Acme Corp'
+    link_type       VARCHAR DEFAULT 'exact',   -- exact | fuzzy | foreign_key
+    PRIMARY KEY (entity_id, table_name, column_name, column_value)
+);
+
+-- Links from entities to their vector store chunks
+CREATE TABLE IF NOT EXISTS entity_embedding_links (
+    entity_id       VARCHAR REFERENCES entity_registry(entity_id),
+    chunk_id        VARCHAR NOT NULL,          -- ChromaDB document/chunk ID
+    mention_type    VARCHAR DEFAULT 'explicit',-- explicit | inferred | co-reference
+    confidence      FLOAT   DEFAULT 1.0,       -- 0.0 - 1.0
+    PRIMARY KEY (entity_id, chunk_id)
+);
+
+-- Links from entities to their graph node counterparts
+CREATE TABLE IF NOT EXISTS entity_graph_links (
+    entity_id       VARCHAR REFERENCES entity_registry(entity_id),
+    graph_node_id   VARCHAR NOT NULL,          -- ID in graph_nodes table
+    PRIMARY KEY (entity_id, graph_node_id)
+);
+
+-- Indexes for fast cross-modal lookups
+CREATE INDEX IF NOT EXISTS idx_sql_links_entity   ON entity_sql_links(entity_id);
+CREATE INDEX IF NOT EXISTS idx_sql_links_table    ON entity_sql_links(table_name, column_value);
+CREATE INDEX IF NOT EXISTS idx_embed_links_entity ON entity_embedding_links(entity_id);
+CREATE INDEX IF NOT EXISTS idx_embed_links_chunk  ON entity_embedding_links(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_graph_links_entity ON entity_graph_links(entity_id);
+CREATE INDEX IF NOT EXISTS idx_graph_links_node   ON entity_graph_links(graph_node_id);
+```
+
+**Python Implementation**:
+
+```python
+"""
+Unified Entity Registry for cross-modal data mapping.
+
+This module provides the EntityRegistry class that links entities
+across the three data stores: vector embeddings (ChromaDB),
+relational tables (DuckDB), and the graph layer (DuckDB graph tables).
+
+It enables cross-modal queries by resolving a canonical entity
+to its representations in each store.
+"""
+
+import json
+import duckdb
+from typing import Optional
+from datetime import datetime
+
+
+class EntityRegistry:
+    """
+    Central registry mapping canonical entities to all three data stores.
+
+    Each real-world entity (person, company, product, etc.) gets a single
+    canonical entry, with links to every store that references it:
+      - SQL tables/columns (entity_sql_links)
+      - ChromaDB chunk IDs (entity_embedding_links)
+      - Graph node IDs (entity_graph_links)
+    """
+
+    def __init__(self, db_path: str):
+        """
+        Initialise the registry.
+
+        Args:
+            db_path: Path to the DuckDB database that already holds
+                     the warehouse tables and graph tables.
+        """
+        self.conn = duckdb.connect(db_path)
+        self._init_schema()
+
+    # ------------------------------------------------------------------
+    # Schema bootstrap
+    # ------------------------------------------------------------------
+
+    def _init_schema(self) -> None:
+        """Create registry tables if they do not yet exist."""
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS entity_registry (
+                entity_id       VARCHAR PRIMARY KEY,
+                entity_type     VARCHAR NOT NULL,
+                canonical_name  VARCHAR NOT NULL,
+                aliases         JSON    DEFAULT '[]',
+                metadata        JSON    DEFAULT '{}',
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS entity_sql_links (
+                entity_id    VARCHAR,
+                table_name   VARCHAR NOT NULL,
+                column_name  VARCHAR NOT NULL,
+                column_value VARCHAR NOT NULL,
+                link_type    VARCHAR DEFAULT 'exact',
+                PRIMARY KEY (entity_id, table_name, column_name, column_value)
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS entity_embedding_links (
+                entity_id    VARCHAR,
+                chunk_id     VARCHAR NOT NULL,
+                mention_type VARCHAR DEFAULT 'explicit',
+                confidence   FLOAT   DEFAULT 1.0,
+                PRIMARY KEY (entity_id, chunk_id)
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS entity_graph_links (
+                entity_id     VARCHAR,
+                graph_node_id VARCHAR NOT NULL,
+                PRIMARY KEY (entity_id, graph_node_id)
+            )
+        """)
+
+    # ------------------------------------------------------------------
+    # Entity CRUD
+    # ------------------------------------------------------------------
+
+    def register_entity(
+        self,
+        entity_id: str,
+        entity_type: str,
+        canonical_name: str,
+        aliases: Optional[list[str]] = None,
+        metadata: Optional[dict] = None,
+    ) -> str:
+        """
+        Register a new canonical entity (or update an existing one).
+
+        Args:
+            entity_id:      Unique identifier (e.g. 'ORG_acme_corp').
+            entity_type:    Category — Person | Organization | Product |
+                            Concept | Location.
+            canonical_name: Human-readable display name.
+            aliases:        Alternative surface forms for fuzzy matching.
+            metadata:       Arbitrary key-value properties.
+
+        Returns:
+            The entity_id that was registered.
+        """
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO entity_registry
+                (entity_id, entity_type, canonical_name, aliases,
+                 metadata, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                entity_id,
+                entity_type,
+                canonical_name,
+                json.dumps(aliases or []),
+                json.dumps(metadata or {}),
+                datetime.utcnow().isoformat(),
+            ],
+        )
+        return entity_id
+
+    def get_entity(self, entity_id: str) -> Optional[dict]:
+        """
+        Retrieve a single entity and ALL its cross-modal links.
+
+        Args:
+            entity_id: The canonical entity identifier.
+
+        Returns:
+            Dict with keys 'entity', 'sql_links', 'embedding_links',
+            'graph_links', or None if the entity is not found.
+        """
+        # --- Core record ---
+        row = self.conn.execute(
+            "SELECT * FROM entity_registry WHERE entity_id = ?",
+            [entity_id],
+        ).fetchone()
+        if not row:
+            return None
+
+        entity = {
+            "entity_id": row[0],
+            "entity_type": row[1],
+            "canonical_name": row[2],
+            "aliases": json.loads(row[3]) if isinstance(row[3], str) else row[3],
+            "metadata": json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        }
+
+        # --- SQL links ---
+        sql_rows = self.conn.execute(
+            "SELECT table_name, column_name, column_value, link_type "
+            "FROM entity_sql_links WHERE entity_id = ?",
+            [entity_id],
+        ).fetchall()
+        sql_links = [
+            {"table": r[0], "column": r[1], "value": r[2], "link_type": r[3]}
+            for r in sql_rows
+        ]
+
+        # --- Embedding links ---
+        emb_rows = self.conn.execute(
+            "SELECT chunk_id, mention_type, confidence "
+            "FROM entity_embedding_links WHERE entity_id = ?",
+            [entity_id],
+        ).fetchall()
+        embedding_links = [
+            {"chunk_id": r[0], "mention_type": r[1], "confidence": r[2]}
+            for r in emb_rows
+        ]
+
+        # --- Graph links ---
+        graph_rows = self.conn.execute(
+            "SELECT graph_node_id FROM entity_graph_links WHERE entity_id = ?",
+            [entity_id],
+        ).fetchall()
+        graph_links = [r[0] for r in graph_rows]
+
+        return {
+            "entity": entity,
+            "sql_links": sql_links,
+            "embedding_links": embedding_links,
+            "graph_links": graph_links,
+        }
+
+    # ------------------------------------------------------------------
+    # Cross-modal link management
+    # ------------------------------------------------------------------
+
+    def link_to_sql(
+        self,
+        entity_id: str,
+        table_name: str,
+        column_name: str,
+        column_value: str,
+        link_type: str = "exact",
+    ) -> None:
+        """
+        Register that *entity_id* appears in a SQL table.
+
+        Args:
+            entity_id:    Canonical entity identifier.
+            table_name:   Target table (e.g. 'suppliers').
+            column_name:  Target column (e.g. 'name').
+            column_value: The value that represents this entity.
+            link_type:    'exact', 'fuzzy', or 'foreign_key'.
+        """
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO entity_sql_links
+                (entity_id, table_name, column_name, column_value, link_type)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [entity_id, table_name, column_name, column_value, link_type],
+        )
+
+    def link_to_embedding(
+        self,
+        entity_id: str,
+        chunk_id: str,
+        mention_type: str = "explicit",
+        confidence: float = 1.0,
+    ) -> None:
+        """
+        Register that *entity_id* is mentioned in a vector-store chunk.
+
+        Args:
+            entity_id:    Canonical entity identifier.
+            chunk_id:     ChromaDB document / chunk ID.
+            mention_type: 'explicit', 'inferred', or 'co-reference'.
+            confidence:   How certain the link is (0.0–1.0).
+        """
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO entity_embedding_links
+                (entity_id, chunk_id, mention_type, confidence)
+            VALUES (?, ?, ?, ?)
+            """,
+            [entity_id, chunk_id, mention_type, confidence],
+        )
+
+    def link_to_graph(self, entity_id: str, graph_node_id: str) -> None:
+        """
+        Register that *entity_id* corresponds to a graph node.
+
+        Args:
+            entity_id:     Canonical entity identifier.
+            graph_node_id: ID in the graph_nodes table.
+        """
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO entity_graph_links
+                (entity_id, graph_node_id)
+            VALUES (?, ?)
+            """,
+            [entity_id, graph_node_id],
+        )
+
+    # ------------------------------------------------------------------
+    # Cross-modal resolution queries
+    # ------------------------------------------------------------------
+
+    def resolve_entity_by_name(
+        self, name: str, entity_type: Optional[str] = None
+    ) -> list[dict]:
+        """
+        Find entities whose canonical_name or aliases match *name*.
+
+        Uses case-insensitive containment so that partial matches
+        (e.g. 'Acme' matching 'Acme Corp') are returned.
+
+        Args:
+            name:        Search string.
+            entity_type: Optional filter (e.g. 'Organization').
+
+        Returns:
+            List of entity dicts (without full link expansion).
+        """
+        query = """
+            SELECT entity_id, entity_type, canonical_name, aliases
+            FROM entity_registry
+            WHERE (
+                LOWER(canonical_name) LIKE '%' || LOWER(?) || '%'
+                OR LOWER(aliases::VARCHAR) LIKE '%' || LOWER(?) || '%'
+            )
+        """
+        params = [name, name]
+
+        if entity_type:
+            query += " AND entity_type = ?"
+            params.append(entity_type)
+
+        rows = self.conn.execute(query, params).fetchall()
+        return [
+            {
+                "entity_id": r[0],
+                "entity_type": r[1],
+                "canonical_name": r[2],
+                "aliases": json.loads(r[3]) if isinstance(r[3], str) else r[3],
+            }
+            for r in rows
+        ]
+
+    def get_sql_rows_for_entity(self, entity_id: str) -> list[dict]:
+        """
+        Given an entity, return the actual SQL table rows that reference it.
+
+        This is the key cross-modal bridge: start from an entity (which
+        might come from a graph traversal or a document mention) and
+        land in the relational warehouse.
+
+        Args:
+            entity_id: Canonical entity identifier.
+
+        Returns:
+            List of dicts, each with 'table', 'column', 'value',
+            and 'rows' (the fetched SQL rows).
+        """
+        links = self.conn.execute(
+            "SELECT table_name, column_name, column_value "
+            "FROM entity_sql_links WHERE entity_id = ?",
+            [entity_id],
+        ).fetchall()
+
+        results = []
+        for table, column, value in links:
+            try:
+                rows = self.conn.execute(
+                    f"SELECT * FROM {table} WHERE {column} = ?", [value]
+                ).fetchdf().to_dict("records")
+                results.append(
+                    {"table": table, "column": column, "value": value, "rows": rows}
+                )
+            except Exception as exc:
+                results.append(
+                    {"table": table, "column": column, "value": value, "error": str(exc)}
+                )
+        return results
+
+    def get_chunks_for_entity(
+        self, entity_id: str, min_confidence: float = 0.5
+    ) -> list[str]:
+        """
+        Return ChromaDB chunk IDs that mention this entity.
+
+        Args:
+            entity_id:      Canonical entity identifier.
+            min_confidence:  Minimum confidence threshold.
+
+        Returns:
+            List of chunk_id strings.
+        """
+        rows = self.conn.execute(
+            "SELECT chunk_id FROM entity_embedding_links "
+            "WHERE entity_id = ? AND confidence >= ?",
+            [entity_id, min_confidence],
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_graph_neighborhood_for_entity(
+        self, entity_id: str, depth: int = 1
+    ) -> dict:
+        """
+        Return the graph subgraph around this entity's graph node(s).
+
+        Delegates to the DuckDBGraphStore.get_subgraph method.
+        
+        Args:
+            entity_id: Canonical entity identifier.
+            depth:     Number of hops to traverse.
+
+        Returns:
+            Dict with 'nodes' and 'edges' from the graph store.
+        """
+        # Find the graph node IDs linked to this entity
+        node_rows = self.conn.execute(
+            "SELECT graph_node_id FROM entity_graph_links WHERE entity_id = ?",
+            [entity_id],
+        ).fetchall()
+
+        all_nodes = []
+        all_edges = []
+
+        for (graph_node_id,) in node_rows:
+            # Re-use the recursive CTE from DuckDBGraphStore
+            reachable_query = f"""
+                WITH RECURSIVE reachable AS (
+                    SELECT '{graph_node_id}' AS node_id, 0 AS distance
+                    UNION
+                    SELECT DISTINCT
+                        CASE WHEN e.source_id = r.node_id THEN e.target_id
+                             ELSE e.source_id END AS node_id,
+                        r.distance + 1
+                    FROM reachable r
+                    JOIN graph_edges e
+                      ON r.node_id IN (e.source_id, e.target_id)
+                    WHERE r.distance < {depth}
+                )
+                SELECT DISTINCT node_id FROM reachable
+            """
+            node_ids = [
+                row[0] for row in self.conn.execute(reachable_query).fetchall()
+            ]
+            if not node_ids:
+                continue
+
+            id_list = ",".join(f"'{n}'" for n in node_ids)
+            nodes = (
+                self.conn.execute(
+                    f"SELECT node_id, node_type, name, properties "
+                    f"FROM graph_nodes WHERE node_id IN ({id_list})"
+                )
+                .fetchdf()
+                .to_dict("records")
+            )
+            edges = (
+                self.conn.execute(
+                    f"SELECT source_id, target_id, relationship, properties "
+                    f"FROM graph_edges "
+                    f"WHERE source_id IN ({id_list}) "
+                    f"  AND target_id IN ({id_list})"
+                )
+                .fetchdf()
+                .to_dict("records")
+            )
+            all_nodes.extend(nodes)
+            all_edges.extend(edges)
+
+        return {"nodes": all_nodes, "edges": all_edges}
+
+    # ------------------------------------------------------------------
+    # Statistics
+    # ------------------------------------------------------------------
+
+    def get_stats(self) -> dict:
+        """Return registry-level statistics."""
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM entity_registry"
+        ).fetchone()[0]
+        sql_links = self.conn.execute(
+            "SELECT COUNT(*) FROM entity_sql_links"
+        ).fetchone()[0]
+        emb_links = self.conn.execute(
+            "SELECT COUNT(*) FROM entity_embedding_links"
+        ).fetchone()[0]
+        graph_links = self.conn.execute(
+            "SELECT COUNT(*) FROM entity_graph_links"
+        ).fetchone()[0]
+
+        return {
+            "total_entities": total,
+            "sql_links": sql_links,
+            "embedding_links": emb_links,
+            "graph_links": graph_links,
+        }
+```
+
+### Entity Extraction Pipeline
+- status: todo
+- type: task
+- id: unified-nexus.kg-data-mapping.extraction-pipeline
+- priority: high
+- estimate: 3h
+- blocked_by: [unified-nexus.kg-data-mapping.entity-registry]
+- last_checked: 2026-02-02
+<!-- content -->
+The entity registry is only useful if it is populated. This pipeline automatically discovers entities in each data store and links them.
+
+**Three extraction modes**:
+
+1. **SQL Schema Scan** — inspect DuckDB tables to discover entity-bearing columns (names, IDs, foreign keys).
+2. **Document NER Scan** — run Named Entity Recognition on vector-store chunks to find entity mentions.
+3. **Graph Sync** — mirror graph nodes into the registry so that every graph node has a canonical entity.
+
+```python
+"""
+Entity extraction pipeline for populating the Unified Entity Registry.
+
+Scans the three data stores (SQL tables, vector-store chunks, graph nodes)
+and creates cross-modal links so that the same real-world entity can be
+resolved across all stores.
+"""
+
+import json
+import re
+from typing import Optional
+
+
+class EntityExtractionPipeline:
+    """
+    Discovers entities across data stores and populates the registry.
+
+    Operates in three modes that can run independently or together:
+      1. scan_sql_tables  — column-value heuristic scan
+      2. scan_embeddings  — LLM-based NER over vector-store chunks
+      3. sync_graph_nodes — direct mirror from graph_nodes table
+    """
+
+    def __init__(self, registry, vector_store, llm_client=None):
+        """
+        Initialise the pipeline.
+
+        Args:
+            registry:     EntityRegistry instance.
+            vector_store: VectorStore (ChromaDB) instance.
+            llm_client:   Optional LLM for NER-style extraction.
+                          If None, only regex-based extraction is used.
+        """
+        self.registry = registry
+        self.vector_store = vector_store
+        self.llm = llm_client
+
+    # ------------------------------------------------------------------
+    # Mode 1: SQL table scan
+    # ------------------------------------------------------------------
+
+    # Columns whose names strongly suggest they hold entity references
+    _ENTITY_COLUMN_PATTERNS = {
+        "name": "Organization",
+        "company": "Organization",
+        "supplier": "Organization",
+        "customer": "Organization",
+        "vendor": "Organization",
+        "employee": "Person",
+        "person": "Person",
+        "manager": "Person",
+        "product": "Product",
+        "city": "Location",
+        "country": "Location",
+        "region": "Location",
+    }
+
+    def scan_sql_tables(self) -> dict:
+        """
+        Inspect all DuckDB tables and register entity-bearing values.
+
+        Heuristic: any column whose name matches _ENTITY_COLUMN_PATTERNS
+        is assumed to hold entity names. Each distinct value becomes a
+        registered entity with an sql_link.
+
+        Returns:
+            Dict with 'entities_found' count and 'tables_scanned'.
+        """
+        conn = self.registry.conn
+        entities_found = 0
+
+        # List all user tables (exclude registry / graph meta-tables)
+        tables = conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main'"
+        ).fetchall()
+        registry_tables = {
+            "entity_registry",
+            "entity_sql_links",
+            "entity_embedding_links",
+            "entity_graph_links",
+            "graph_nodes",
+            "graph_edges",
+        }
+
+        for (table_name,) in tables:
+            if table_name in registry_tables:
+                continue
+
+            # Get columns for this table
+            columns = conn.execute(
+                f"SELECT column_name FROM information_schema.columns "
+                f"WHERE table_name = '{table_name}'"
+            ).fetchall()
+
+            for (col_name,) in columns:
+                col_lower = col_name.lower()
+                # Check if column name matches any entity pattern
+                matched_type = None
+                for pattern, etype in self._ENTITY_COLUMN_PATTERNS.items():
+                    if pattern in col_lower:
+                        matched_type = etype
+                        break
+
+                if matched_type is None:
+                    continue
+
+                # Get distinct non-null values
+                try:
+                    values = conn.execute(
+                        f"SELECT DISTINCT {col_name} FROM {table_name} "
+                        f"WHERE {col_name} IS NOT NULL LIMIT 500"
+                    ).fetchall()
+                except Exception:
+                    continue
+
+                for (value,) in values:
+                    value_str = str(value).strip()
+                    if not value_str:
+                        continue
+
+                    # Derive a stable entity_id from type + normalised name
+                    entity_id = self._make_entity_id(matched_type, value_str)
+
+                    # Register (idempotent)
+                    self.registry.register_entity(
+                        entity_id=entity_id,
+                        entity_type=matched_type,
+                        canonical_name=value_str,
+                    )
+                    self.registry.link_to_sql(
+                        entity_id=entity_id,
+                        table_name=table_name,
+                        column_name=col_name,
+                        column_value=value_str,
+                        link_type="exact",
+                    )
+                    entities_found += 1
+
+        return {
+            "entities_found": entities_found,
+            "tables_scanned": len(tables) - len(registry_tables),
+        }
+
+    # ------------------------------------------------------------------
+    # Mode 2: Vector-store NER scan
+    # ------------------------------------------------------------------
+
+    def scan_embeddings(self, batch_size: int = 20) -> dict:
+        """
+        Run NER on vector-store chunks and link mentions to entities.
+
+        If an LLM client is available, uses it for extraction.
+        Otherwise falls back to a simple regex-based approach.
+
+        Args:
+            batch_size: Number of chunks to process per LLM call.
+
+        Returns:
+            Dict with 'entities_found' and 'chunks_scanned'.
+        """
+        # Retrieve all chunks (in practice, iterate in batches)
+        all_docs = self.vector_store.collection.get(
+            limit=1000, include=["documents", "metadatas"]
+        )
+        entities_found = 0
+        chunks_scanned = 0
+
+        # Process in batches
+        doc_ids = all_docs["ids"]
+        doc_texts = all_docs["documents"]
+
+        for i in range(0, len(doc_ids), batch_size):
+            batch_ids = doc_ids[i : i + batch_size]
+            batch_texts = doc_texts[i : i + batch_size]
+
+            if self.llm:
+                # LLM-based extraction (higher quality)
+                mentions = self._extract_entities_llm(batch_texts, batch_ids)
+            else:
+                # Regex fallback (lower quality, zero cost)
+                mentions = self._extract_entities_regex(batch_texts, batch_ids)
+
+            # Register each discovered mention
+            for mention in mentions:
+                entity_id = self._make_entity_id(
+                    mention["type"], mention["name"]
+                )
+                self.registry.register_entity(
+                    entity_id=entity_id,
+                    entity_type=mention["type"],
+                    canonical_name=mention["name"],
+                )
+                self.registry.link_to_embedding(
+                    entity_id=entity_id,
+                    chunk_id=mention["chunk_id"],
+                    mention_type="explicit" if self.llm else "inferred",
+                    confidence=mention.get("confidence", 0.8),
+                )
+                entities_found += 1
+
+            chunks_scanned += len(batch_ids)
+
+        return {
+            "entities_found": entities_found,
+            "chunks_scanned": chunks_scanned,
+        }
+
+    def _extract_entities_llm(
+        self, texts: list[str], chunk_ids: list[str]
+    ) -> list[dict]:
+        """
+        Use the LLM to extract named entities from a batch of chunks.
+
+        Args:
+            texts:     List of chunk text strings.
+            chunk_ids: Corresponding ChromaDB chunk IDs.
+
+        Returns:
+            List of mention dicts with keys: name, type, chunk_id, confidence.
+        """
+        # Build a numbered batch for the prompt
+        numbered = "\n".join(
+            f"[CHUNK {i}] {text[:600]}" for i, text in enumerate(texts)
+        )
+        prompt = f"""Extract named entities from each chunk below.
+
+{numbered}
+
+Return ONLY a JSON array of objects:
+[{{"chunk_index": 0, "name": "Entity Name", "type": "Person|Organization|Product|Location|Concept"}}]
+
+Be conservative — only extract clearly named entities."""
+
+        response = self.llm.generate_content(prompt)
+        mentions = []
+
+        # Parse JSON from response
+        json_match = re.search(r"\[[\s\S]*?\]", response.text)
+        if json_match:
+            try:
+                raw = json.loads(json_match.group())
+                for item in raw:
+                    idx = item.get("chunk_index", 0)
+                    if 0 <= idx < len(chunk_ids):
+                        mentions.append(
+                            {
+                                "name": item["name"],
+                                "type": item.get("type", "Concept"),
+                                "chunk_id": chunk_ids[idx],
+                                "confidence": 0.85,
+                            }
+                        )
+            except json.JSONDecodeError:
+                pass
+
+        return mentions
+
+    def _extract_entities_regex(
+        self, texts: list[str], chunk_ids: list[str]
+    ) -> list[dict]:
+        """
+        Fallback: extract capitalised multi-word phrases as entity candidates.
+
+        Args:
+            texts:     List of chunk text strings.
+            chunk_ids: Corresponding ChromaDB chunk IDs.
+
+        Returns:
+            List of mention dicts.
+        """
+        # Pattern: two or more capitalised words in sequence
+        pattern = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+        mentions = []
+
+        for text, cid in zip(texts, chunk_ids):
+            for match in pattern.finditer(text):
+                name = match.group(1)
+                # Simple heuristic for type
+                entity_type = "Person" if len(name.split()) == 2 else "Organization"
+                mentions.append(
+                    {
+                        "name": name,
+                        "type": entity_type,
+                        "chunk_id": cid,
+                        "confidence": 0.5,
+                    }
+                )
+
+        return mentions
+
+    # ------------------------------------------------------------------
+    # Mode 3: Graph node sync
+    # ------------------------------------------------------------------
+
+    def sync_graph_nodes(self) -> dict:
+        """
+        Mirror every node in graph_nodes into the entity registry.
+
+        Returns:
+            Dict with 'entities_synced' count.
+        """
+        conn = self.registry.conn
+        rows = conn.execute(
+            "SELECT node_id, node_type, name, properties FROM graph_nodes"
+        ).fetchall()
+
+        synced = 0
+        for node_id, node_type, name, props in rows:
+            entity_id = self._make_entity_id(node_type or "Concept", name)
+            self.registry.register_entity(
+                entity_id=entity_id,
+                entity_type=node_type or "Concept",
+                canonical_name=name,
+                metadata=json.loads(props) if isinstance(props, str) else (props or {}),
+            )
+            self.registry.link_to_graph(entity_id, node_id)
+            synced += 1
+
+        return {"entities_synced": synced}
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_entity_id(entity_type: str, name: str) -> str:
+        """
+        Derive a deterministic entity_id from type + normalised name.
+
+        Args:
+            entity_type: E.g. 'Organization'.
+            name:        E.g. 'Acme Corp'.
+
+        Returns:
+            Stable ID like 'ORG_acme_corp'.
+        """
+        prefix_map = {
+            "Person": "PER",
+            "Organization": "ORG",
+            "Product": "PRD",
+            "Location": "LOC",
+            "Concept": "CON",
+        }
+        prefix = prefix_map.get(entity_type, "ENT")
+        normalised = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+        return f"{prefix}_{normalised}"
+
+    def run_full_sync(self) -> dict:
+        """
+        Execute all three extraction modes in sequence.
+
+        Returns:
+            Combined stats from all three scans.
+        """
+        sql_stats = self.scan_sql_tables()
+        graph_stats = self.sync_graph_nodes()
+        embed_stats = self.scan_embeddings()
+
+        return {
+            "sql_scan": sql_stats,
+            "graph_sync": graph_stats,
+            "embedding_scan": embed_stats,
+        }
+```
+
+### Cross-Modal Query Engine
+- status: todo
+- type: task
+- id: unified-nexus.kg-data-mapping.cross-modal-engine
+- priority: high
+- estimate: 3h
+- blocked_by: [unified-nexus.kg-data-mapping.entity-registry, unified-nexus.implementation.phase4]
+- last_checked: 2026-02-02
+<!-- content -->
+This component extends the existing `UnifiedEngine` to support cross-modal queries. When the router detects that a query involves entities that span multiple stores, the cross-modal engine resolves entity references across stores before assembling context.
+
+**Updated Architecture Diagram**:
+
+```
+                          ┌─────────────────────────────────────┐
+                          │           User Question             │
+                          └──────────────┬──────────────────────┘
+                                         │
+                                         ▼
+                          ┌─────────────────────────────────────┐
+                          │         Query Router (LLM)          │
+                          │  Classifies: structured/unstructured│
+                          │      /graph/hybrid/cross-modal      │
+                          └──────────────┬──────────────────────┘
+                                         │
+         ┌───────────────┬───────────────┼───────────────┬──────────────┐
+         │               │               │               │              │
+         ▼               ▼               ▼               ▼              ▼
+┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ ┌────────────┐
+│  Vector    │  │  DuckDB    │  │  Graph     │  │  Hybrid    │ │Cross-Modal │
+│  Store     │  │ (Text2SQL) │  │  Store     │  │  (Any 2+)  │ │  Resolver  │
+│ (ChromaDB) │  │            │  │            │  │            │ │  (Entity   │
+│            │  │            │  │            │  │            │ │  Registry) │
+└─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘ └─────┬──────┘
+      │               │               │               │              │
+      └───────────────┴───────────────┼───────────────┴──────────────┘
+                                      │
+                          ┌───────────▼────────────┐
+                          │  Entity-Aware Context  │
+                          │      Assembly          │
+                          └───────────┬────────────┘
+                                      │
+                                      ▼
+                          ┌─────────────────────────────────────┐
+                          │        Answer Generation (LLM)      │
+                          └─────────────────────────────────────┘
+```
+
+**Python Implementation**:
+
+```python
+"""
+Cross-modal query engine extension for the Unified Nexus.
+
+Adds entity-aware query resolution that can follow references
+across vector store, SQL tables, and graph nodes.
+"""
+
+from typing import Optional
+from enum import Enum
+
+
+class QueryType(Enum):
+    """Extended classification including CROSS_MODAL."""
+    STRUCTURED = "structured"
+    UNSTRUCTURED = "unstructured"
+    GRAPH = "graph"
+    HYBRID = "hybrid"
+    CROSS_MODAL = "cross_modal"  # Requires entity resolution across stores
+
+
+class CrossModalEngine:
+    """
+    Extends UnifiedEngine with entity-aware cross-modal resolution.
+
+    When a query references entities that exist in multiple stores,
+    this engine resolves the entity, gathers context from all linked
+    stores, and assembles a richer context for the LLM.
+    """
+
+    # Keywords that suggest cross-modal resolution is needed
+    CROSS_MODAL_KEYWORDS = {
+        "revenue of", "sales for", "cost of",       # entity → SQL
+        "documents about", "reports mentioning",     # entity → embeddings
+        "connected to", "related to", "network of",  # entity → graph
+        "impact of", "affected by", "depends on",    # entity → graph → SQL
+        "everything about", "full picture",           # entity → all stores
+        "who mentioned", "where is it referenced",    # any → embeddings
+    }
+
+    def __init__(
+        self,
+        unified_engine,
+        entity_registry,
+        graph_store=None,
+        llm_client=None,
+    ):
+        """
+        Initialise the cross-modal engine.
+
+        Args:
+            unified_engine:  Existing UnifiedEngine instance.
+            entity_registry: EntityRegistry for cross-modal resolution.
+            graph_store:     Optional DuckDBGraphStore for graph queries.
+            llm_client:      LLM for entity identification in queries.
+        """
+        self.engine = unified_engine
+        self.registry = entity_registry
+        self.graph_store = graph_store
+        self.llm = llm_client or unified_engine.llm
+
+    def _detect_cross_modal(self, query: str) -> bool:
+        """
+        Check whether a query likely needs cross-modal resolution.
+
+        Args:
+            query: User question text.
+
+        Returns:
+            True if cross-modal keywords are detected.
+        """
+        query_lower = query.lower()
+        return any(kw in query_lower for kw in self.CROSS_MODAL_KEYWORDS)
+
+    def _identify_entities_in_query(self, query: str) -> list[dict]:
+        """
+        Use the LLM to extract entity names from the user query,
+        then resolve them against the Entity Registry.
+
+        Args:
+            query: User question text.
+
+        Returns:
+            List of resolved entity dicts from the registry.
+        """
+        prompt = f"""Extract the key entity names from this question.
+
+Question: "{query}"
+
+Return ONLY a JSON array of strings with the entity names.
+Example: ["Acme Corp", "Alice Chen"]
+If no specific entities are mentioned, return [].
+"""
+        response = self.llm.generate_content(prompt)
+
+        import json, re
+        json_match = re.search(r"\[[\s\S]*?\]", response.text)
+        if not json_match:
+            return []
+
+        try:
+            names = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            return []
+
+        # Resolve each name against the registry
+        resolved = []
+        for name in names:
+            matches = self.registry.resolve_entity_by_name(str(name))
+            if matches:
+                # Pick the best match (first result)
+                full = self.registry.get_entity(matches[0]["entity_id"])
+                if full:
+                    resolved.append(full)
+
+        return resolved
+
+    def _gather_cross_modal_context(self, entities: list[dict]) -> str:
+        """
+        For each resolved entity, pull context from every linked store.
+
+        Args:
+            entities: List of fully-resolved entity dicts
+                      (output of EntityRegistry.get_entity).
+
+        Returns:
+            Formatted context string combining all cross-modal data.
+        """
+        sections = []
+
+        for ent in entities:
+            info = ent["entity"]
+            header = f"=== Entity: {info['canonical_name']} ({info['entity_type']}) ==="
+            parts = [header]
+
+            # --- SQL context ---
+            if ent["sql_links"]:
+                parts.append("\n--- Structured Data (SQL) ---")
+                sql_rows = self.registry.get_sql_rows_for_entity(
+                    info["entity_id"]
+                )
+                for link in sql_rows:
+                    if "rows" in link and link["rows"]:
+                        parts.append(
+                            f"Table '{link['table']}' "
+                            f"(where {link['column']}='{link['value']}'):"
+                        )
+                        for i, row in enumerate(link["rows"][:10]):
+                            parts.append(f"  {i + 1}. {row}")
+                    elif "error" in link:
+                        parts.append(f"  [SQL error: {link['error']}]")
+
+            # --- Embedding context ---
+            if ent["embedding_links"]:
+                parts.append("\n--- Document Mentions (RAG) ---")
+                chunk_ids = self.registry.get_chunks_for_entity(
+                    info["entity_id"]
+                )
+                if chunk_ids:
+                    # Fetch actual chunk text from ChromaDB
+                    results = self.engine.vector_store.collection.get(
+                        ids=chunk_ids[:5], include=["documents", "metadatas"]
+                    )
+                    for j, doc_text in enumerate(results["documents"]):
+                        source = ""
+                        if results["metadatas"] and results["metadatas"][j]:
+                            source = results["metadatas"][j].get(
+                                "source_file", ""
+                            )
+                        parts.append(f"  Chunk {j + 1} (from {source}):")
+                        # Truncate long chunks for context window efficiency
+                        parts.append(f"    {doc_text[:400]}...")
+
+            # --- Graph context ---
+            if ent["graph_links"]:
+                parts.append("\n--- Relationship Network (Graph) ---")
+                subgraph = self.registry.get_graph_neighborhood_for_entity(
+                    info["entity_id"], depth=2
+                )
+                if subgraph["nodes"]:
+                    parts.append(
+                        f"  Subgraph: {len(subgraph['nodes'])} nodes, "
+                        f"{len(subgraph['edges'])} edges"
+                    )
+                    for edge in subgraph["edges"][:15]:
+                        parts.append(
+                            f"  {edge['source_id']} "
+                            f"--[{edge['relationship']}]--> "
+                            f"{edge['target_id']}"
+                        )
+
+            sections.append("\n".join(parts))
+
+        return "\n\n".join(sections)
+
+    def query(self, question: str) -> dict:
+        """
+        Process a query, using cross-modal resolution when appropriate.
+
+        Falls back to the standard UnifiedEngine for queries that
+        do not require cross-modal resolution.
+
+        Args:
+            question: User's natural language question.
+
+        Returns:
+            Dict with 'answer', 'query_type', 'entities', and metadata.
+        """
+        # Step 1: Decide if cross-modal resolution is needed
+        if not self._detect_cross_modal(question):
+            # Delegate to the standard unified engine
+            result = self.engine.query(question)
+            result["entities"] = []
+            return result
+
+        # Step 2: Identify and resolve entities
+        entities = self._identify_entities_in_query(question)
+
+        if not entities:
+            # No entities found — fall back to standard engine
+            result = self.engine.query(question)
+            result["entities"] = []
+            return result
+
+        # Step 3: Gather cross-modal context
+        cross_context = self._gather_cross_modal_context(entities)
+
+        # Step 4: Also run the normal retrieval path for additional context
+        standard_result = self.engine.query(question)
+        standard_context = standard_result.get("context_summary", "")
+
+        # Step 5: Combine contexts and generate final answer
+        combined_context = (
+            f"=== CROSS-MODAL ENTITY CONTEXT ===\n{cross_context}\n\n"
+            f"=== STANDARD RETRIEVAL CONTEXT ===\n{standard_context}"
+        )
+
+        answer = self._generate_answer(question, combined_context)
+
+        return {
+            "question": question,
+            "query_type": "cross_modal",
+            "entities": [
+                {
+                    "entity_id": e["entity"]["entity_id"],
+                    "name": e["entity"]["canonical_name"],
+                    "stores_linked": {
+                        "sql": len(e["sql_links"]),
+                        "embeddings": len(e["embedding_links"]),
+                        "graph": len(e["graph_links"]),
+                    },
+                }
+                for e in entities
+            ],
+            "retrieval": {
+                "cross_modal_context": cross_context[:500] + "...",
+                "standard_retrieval": standard_result.get("retrieval"),
+            },
+            "answer": answer,
+        }
+
+    def _generate_answer(self, question: str, context: str) -> str:
+        """
+        Generate the final answer from the combined cross-modal context.
+
+        Args:
+            question: Original user question.
+            context:  Merged cross-modal + standard context.
+
+        Returns:
+            Generated answer string.
+        """
+        prompt = f"""Answer the question using the entity and retrieval context below.
+
+Question: {question}
+
+{context}
+
+Instructions:
+- Connect information across different data sources (tables, documents,
+  relationship graphs) to give a comprehensive answer.
+- Cite the source type when referencing data (e.g. "according to the
+  SQL data...", "the documents mention...", "the relationship graph shows...").
+- If information is missing from some stores, note what was available.
+- Be concise but thorough.
+
+Your answer:"""
+
+        response = self.llm.generate_content(prompt)
+        return response.text
+```
+
+### Ontology & Type System
+- status: todo
+- type: task
+- id: unified-nexus.kg-data-mapping.ontology
+- priority: medium
+- estimate: 2h
+- blocked_by: [unified-nexus.kg-data-mapping.entity-registry]
+- last_checked: 2026-02-02
+<!-- content -->
+A lightweight ontology defines the allowed entity types, relationship types, and their constraints. This prevents the graph from becoming a bag of arbitrary triples and supports validation during ingestion.
+
+```python
+"""
+Lightweight ontology for the knowledge graph.
+
+Defines allowed entity types, relationship types, and cardinality
+constraints. Used by the extraction pipeline to validate and normalise
+entities before they enter the registry.
+"""
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class EntityTypeDef:
+    """Definition of an allowed entity type."""
+    name: str                          # e.g. 'Organization'
+    id_prefix: str                     # e.g. 'ORG'
+    description: str = ""
+    allowed_properties: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RelationshipTypeDef:
+    """Definition of an allowed relationship type."""
+    name: str                          # e.g. 'manages'
+    source_types: list[str]            # e.g. ['Person']
+    target_types: list[str]            # e.g. ['Person', 'Department']
+    is_directed: bool = True
+    description: str = ""
+
+
+class Ontology:
+    """
+    Schema for the knowledge graph — entity types and relationship types.
+
+    Use this to validate entities and relationships before they
+    are inserted into the registry or graph store.
+    """
+
+    def __init__(self):
+        """Initialise with default Local Nexus ontology."""
+        self.entity_types: dict[str, EntityTypeDef] = {}
+        self.relationship_types: dict[str, RelationshipTypeDef] = {}
+        self._load_defaults()
+
+    def _load_defaults(self) -> None:
+        """Load the standard entity and relationship types."""
+        # --- Entity types ---
+        for et in [
+            EntityTypeDef("Person", "PER", "A human individual",
+                          ["role", "email", "department"]),
+            EntityTypeDef("Organization", "ORG", "A company or institution",
+                          ["industry", "size", "location"]),
+            EntityTypeDef("Product", "PRD", "A product or service",
+                          ["category", "status", "version"]),
+            EntityTypeDef("Location", "LOC", "A geographic location",
+                          ["country", "region", "coordinates"]),
+            EntityTypeDef("Concept", "CON", "An abstract concept or topic",
+                          ["domain", "definition"]),
+            EntityTypeDef("Document", "DOC", "A tracked document",
+                          ["file_type", "source_path", "ingestion_date"]),
+        ]:
+            self.entity_types[et.name] = et
+
+        # --- Relationship types ---
+        for rt in [
+            RelationshipTypeDef("manages", ["Person"], ["Person", "Department"]),
+            RelationshipTypeDef("works_on", ["Person"], ["Product", "Project"]),
+            RelationshipTypeDef("belongs_to", ["Person"], ["Organization", "Department"]),
+            RelationshipTypeDef("supplies", ["Organization"], ["Organization"]),
+            RelationshipTypeDef("located_in", ["Organization", "Person"], ["Location"]),
+            RelationshipTypeDef("mentions", ["Document"], ["Person", "Organization",
+                                                           "Product", "Concept"]),
+            RelationshipTypeDef("related_to", ["Concept"], ["Concept"]),
+            RelationshipTypeDef("depends_on", ["Product"], ["Product", "Organization"]),
+        ]:
+            self.relationship_types[rt.name] = rt
+
+    def validate_entity(self, entity_type: str) -> bool:
+        """Check whether an entity type is defined in the ontology."""
+        return entity_type in self.entity_types
+
+    def validate_relationship(
+        self, rel_name: str, source_type: str, target_type: str
+    ) -> bool:
+        """
+        Check whether a relationship is valid given source/target types.
+
+        Args:
+            rel_name:    Relationship name (e.g. 'manages').
+            source_type: Entity type of the source node.
+            target_type: Entity type of the target node.
+
+        Returns:
+            True if the relationship is valid per the ontology.
+        """
+        rt = self.relationship_types.get(rel_name)
+        if not rt:
+            return False  # Unknown relationship
+        return source_type in rt.source_types and target_type in rt.target_types
+
+    def get_prefix(self, entity_type: str) -> str:
+        """Return the ID prefix for a given entity type."""
+        et = self.entity_types.get(entity_type)
+        return et.id_prefix if et else "ENT"
+
+    def to_dict(self) -> dict:
+        """Serialise the ontology (useful for LLM prompts)."""
+        return {
+            "entity_types": {
+                k: {"prefix": v.id_prefix, "description": v.description,
+                     "properties": v.allowed_properties}
+                for k, v in self.entity_types.items()
+            },
+            "relationship_types": {
+                k: {"source_types": v.source_types,
+                     "target_types": v.target_types,
+                     "directed": v.is_directed}
+                for k, v in self.relationship_types.items()
+            },
+        }
+```
+
+### Knowledge Graph Data Mapping — Recommendations Summary
+- status: active
+- type: guideline
+- id: unified-nexus.kg-data-mapping.summary
+- last_checked: 2026-02-02
+<!-- content -->
+
+**Implementation phases for the Knowledge Graph Data Mapping layer:**
+
+| Phase | Component | Effort | Dependencies | Cost |
+|:------|:----------|:-------|:-------------|:-----|
+| **1. Entity Registry** | DuckDB tables + `EntityRegistry` class | 3h | Phase 1 + DuckDB graphs | Free |
+| **2. SQL Scan** | `EntityExtractionPipeline.scan_sql_tables` | 1h | Entity Registry | Free |
+| **3. Graph Sync** | `EntityExtractionPipeline.sync_graph_nodes` | 30m | Entity Registry | Free |
+| **4. Embedding NER** | `EntityExtractionPipeline.scan_embeddings` | 2h | Entity Registry + LLM | LLM calls |
+| **5. Cross-Modal Engine** | `CrossModalEngine` extension | 3h | Entity Registry + UnifiedEngine | Free |
+| **6. Ontology** | Type system + validation | 2h | Entity Registry | Free |
+
+**Decision criteria**:
+
+```
+Do you need to answer questions that span data stores?
+├─ No → Skip this layer; the standard UnifiedEngine is sufficient
+└─ Yes → How many entities are shared across stores?
+    ├─ < 50   → Manual registration with EntityRegistry API
+    ├─ 50-500 → Run scan_sql_tables + sync_graph_nodes (Phases 2-3)
+    └─ > 500  → Full pipeline with LLM-based NER (all phases)
+
+Do you need ontology validation?
+├─ No → Use default entity types in extraction pipeline
+└─ Yes → Implement Ontology class (Phase 6)
+```
+
+**Compatibility note**: This layer is fully additive — it creates new DuckDB tables alongside the existing warehouse and graph tables, and the `CrossModalEngine` wraps the existing `UnifiedEngine` without modifying it. If the entity registry is empty, the system degrades gracefully to the standard three-path architecture.
+
 ## Key Benefits of Unified Architecture
 - status: active
 - type: context
 - id: unified-nexus.benefits
 <!-- content -->
+
 | Benefit | Description |
 |:--------|:------------|
 | **Single Interface** | Users ask questions naturally, system figures out how to answer |
 | **Complementary Strengths** | SQL precision + semantic understanding + relationship traversal |
+| **Cross-Modal Linking** | Entity registry bridges stores so graph→SQL→RAG queries work seamlessly |
 | **Cost Effective** | Cheap LLM for routing/SQL, quality LLM only for final answer |
 | **Local First** | DuckDB, ChromaDB, and graph tables all run locally |
-| **Incremental Adoption** | Add documents and graphs gradually alongside structured data |
+| **Incremental Adoption** | Add documents, graphs, and entity links gradually alongside structured data |
 | **Debuggable** | Clear separation of concerns, each component testable |
 
 ## Future Enhancements
@@ -2716,9 +4205,13 @@ This gives you 80% of the value with 20% of the complexity.
 - type: context
 - id: unified-nexus.future
 <!-- content -->
+
 1. **Semantic SQL**: Use embeddings to help with table/column matching
 2. **Feedback Loop**: Log queries and outcomes for fine-tuning
 3. **Multi-modal**: Support images and diagrams in documents
 4. **MCP Server**: Expose the unified engine as MCP tools for other agents
 5. **Temporal Graphs**: Track how relationships change over time
 6. **Graph Embeddings**: Use GNNs for semantic search over graph structure
+7. **Entity Deduplication**: Automatic fuzzy-matching to merge duplicate entity records across stores
+8. **Incremental Sync**: Watch for new SQL inserts / vector-store additions and update entity links in real-time
+9. **Ontology Evolution**: Version-controlled ontology with migration scripts when types change
