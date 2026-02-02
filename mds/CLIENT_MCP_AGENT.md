@@ -5,7 +5,7 @@
 - owner: local-assistant
 - last_checked: 2025-01-29
 <!-- content -->
-This skill enables a coding assistant running **locally on the client's computer** to implement and extend MCP protocols that expose the **Unified Nexus Architecture** (RAG + Data Warehouse + Graph). The agent becomes the intelligent interface through which users query their local data ecosystem.
+This skill enables a coding assistant running **locally on the client's computer** to implement and extend MCP protocols that expose the **Unified Nexus Architecture** (RAG + Data Warehouse + Knowledge Graph). The agent becomes the intelligent interface through which users query their local data ecosystem.
 
 ## Role Definition
 - id: skills.client_mcp_agent.role
@@ -16,7 +16,7 @@ You are a **Local Nexus Client Agent**—an AI assistant running on the user's m
 
 1. **DuckDB Data Warehouse** — Structured tables, SQL queries, aggregations
 2. **ChromaDB Vector Store** — Unstructured documents, semantic search
-3. **Graph Store** (optional) — Relationships, paths, network analysis
+3. **Knowledge Graph Metadata Layer** — Entity-data links, query expansion, guided retrieval
 4. **Unified Query Engine** — Orchestration layer that routes and combines retrieval paths
 
 Your purpose is to **answer questions** by intelligently leveraging these data sources, and to **help developers extend** the MCP protocol when new capabilities are needed.
@@ -36,23 +36,33 @@ The Unified Nexus follows the **TAG (Table-Augmented Generation)** paradigm:
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Query Router (LLM)                           │
-│         Classifies: structured / unstructured / graph / hybrid  │
+│         Classifies: structured / unstructured / hybrid          │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
-       ┌───────────────────────┼───────────────────────┐
-       │                       │                       │
-       ▼                       ▼                       ▼
-┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-│ Vector Store│        │   DuckDB    │        │ Graph Store │
-│ (ChromaDB)  │        │ (Text2SQL)  │        │ (DuckDB/    │
-│             │        │             │        │  Neo4j)     │
-│ Semantic    │        │ Structured  │        │ Relation-   │
-│ Search      │        │ Queries     │        │ ships       │
-└──────┬──────┘        └──────┬──────┘        └──────┬──────┘
-       │                      │                      │
-       └──────────────────────┼──────────────────────┘
-                              │
-                              ▼
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              ★ Knowledge Graph Metadata Layer ★                 │
+│                                                                 │
+│  • Extracts entities from question                              │
+│  • Finds linked tables/documents for each entity                │
+│  • Expands retrieval scope with SQL hints                       │
+│  • Upgrades query type to HYBRID when needed                    │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+       ┌───────────────────────┴───────────────────────┐
+       │                                               │
+       ▼                                               ▼
+┌─────────────┐                                 ┌─────────────┐
+│ Vector Store│                                 │   DuckDB    │
+│ (ChromaDB)  │                                 │ (Text2SQL)  │
+│             │                                 │             │
+│ Semantic    │                                 │ Structured  │
+│ Search      │                                 │ Queries     │
+└──────┬──────┘                                 └──────┬──────┘
+       │                                               │
+       └───────────────────────┬───────────────────────┘
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              Context Assembly & Answer Generation               │
 │         (Quality LLM synthesizes final response)                │
@@ -258,56 +268,85 @@ async def semantic_search(query: str, top_k: int = 5, source_filter: str = None)
     pass
 ```
 
-### Category 4: Graph Data Tools
-- id: skills.client_mcp_agent.tool_categories.graph
+### Category 4: Knowledge Graph Tools
+- id: skills.client_mcp_agent.tool_categories.knowledge_graph
 - status: active
 - type: protocol
 <!-- content -->
-Tools for relationship traversal and network analysis.
+Tools for query expansion and entity-data linking.
 
 | Tool | Purpose | When to Use |
 |:-----|:--------|:------------|
-| `find_connections` | Find paths between entities | Relationship discovery |
-| `get_neighbors` | Get directly connected nodes | Local exploration |
-| `get_subgraph` | Extract neighborhood around entity | Context building |
-| `analyze_centrality` | Find important nodes | Influence analysis |
+| `kg_get_related` | Get sources linked to an entity | Find what tables/docs relate to a person/concept |
+| `kg_find_path` | Find paths between nodes | Relationship discovery |
+| `kg_list_entities` | List known entities | Entity exploration |
+| `kg_add_link` | Create entity-data links | Manual linking |
+| `kg_search` | Search graph by name/type | Discovery |
 
-**Tool: `find_connections`**
+**Tool: `kg_get_related`**
 ```python
 @register_tool(
-    name="find_connections",
+    name="kg_get_related",
     description="""
-    Find paths connecting two entities in the graph.
+    Get all sources (tables/documents) linked to an entity.
     
     Use for questions like:
-    - "How is customer X related to product Y?"
-    - "What's the connection between these two departments?"
-    - "Who connects Alice to Bob?"
+    - "What data sources are related to Alice Chen?"
+    - "What tables mention this project?"
     
-    Returns paths with intermediate nodes and relationship types.
+    Returns linked nodes with relationship types.
     """,
     input_schema={
         "type": "object",
         "properties": {
-            "from_entity": {
+            "entity_name": {
                 "type": "string",
-                "description": "Starting entity name or ID"
-            },
-            "to_entity": {
-                "type": "string",
-                "description": "Target entity name or ID"
-            },
-            "max_depth": {
-                "type": "integer",
-                "description": "Maximum path length (default: 3)",
-                "default": 3
+                "description": "Entity name to find relations for"
             }
         },
-        "required": ["from_entity", "to_entity"]
+        "required": ["entity_name"]
     }
 )
-async def find_connections(from_entity: str, to_entity: str, max_depth: int = 3) -> dict:
-    """Find paths between entities."""
+async def kg_get_related(entity_name: str) -> dict:
+    """Get sources linked to an entity."""
+    kg = _get_kg()
+    entity_node = kg._find_node_by_name(entity_name, node_type='entity')
+    if not entity_node:
+        return {"status": "not_found", "message": f"Entity '{entity_name}' not found"}
+    
+    related = kg.get_related_sources(entity_node.id)
+    return {
+        "status": "success",
+        "entity": entity_name,
+        "related_sources": [
+            {"id": n.id, "name": n.name, "type": n.type}
+            for n in related
+        ]
+    }
+```
+
+**Tool: `kg_add_link`**
+```python
+@register_tool(
+    name="kg_add_link",
+    description="""
+    Create a relationship between two nodes.
+    
+    Use to manually link entities to tables/documents.
+    Example: Link "Alice Chen" to "budgets" table with "manages" relationship.
+    """,
+    input_schema={
+        "type": "object",
+        "properties": {
+            "source_name": {"type": "string", "description": "Source node name"},
+            "target_name": {"type": "string", "description": "Target node name"},
+            "relationship": {"type": "string", "description": "Relationship type"}
+        },
+        "required": ["source_name", "target_name", "relationship"]
+    }
+)
+async def kg_add_link(source_name: str, target_name: str, relationship: str) -> dict:
+    """Create a relationship between nodes."""
     pass
 ```
 
@@ -1098,7 +1137,7 @@ The Client MCP Agent should work harmoniously with your existing agent documenta
 │   Layer 3: Data Layer (Unified Nexus)                           │
 │   ├── DuckDB                  → Structured data                 │
 │   ├── ChromaDB                → Unstructured documents          │
-│   └── Graph Store             → Relationships                   │
+│   └── Knowledge Graph         → Entity links & query expansion  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1114,4 +1153,5 @@ The data layer **holds the actual knowledge**.
 <!-- content -->
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-02-02 | 1.1.0 | Replaced Graph Store with Knowledge Graph Metadata Layer; updated architecture diagram; added KG tools |
 | 2025-01-29 | 1.0.0 | Initial skill definition adapted from MCP_AGENT.md |
