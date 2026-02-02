@@ -9,16 +9,13 @@ def render_sidebar():
         st.title("Local Nexus")
 
         # Tabs for different data types
-        tab1, tab2, tab3 = st.tabs(["Tables", "Documents", "Relations"])
+        tab1, tab2 = st.tabs(["Tables", "Documents"])
 
         with tab1:
             render_structured_data_section()
 
         with tab2:
             render_document_section()
-
-        with tab3:
-            render_graph_section()
 
         st.divider()
         render_system_stats()
@@ -122,27 +119,6 @@ def render_document_section():
     except Exception:
         st.info("No documents ingested yet.")
 
-
-def render_graph_section():
-    """Render graph store information."""
-    st.subheader("Relationships")
-
-    try:
-        from src.core.graph_store import InstitutionalGraph
-        graph = InstitutionalGraph(storage_path="data/graph")
-        stats = graph.get_stats()
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Nodes", stats.get("node_count", 0))
-        with col2:
-            st.metric("Edges", stats.get("edge_count", 0))
-
-        if stats.get("node_types"):
-            st.caption("Node types: " + ", ".join(stats["node_types"]))
-
-    except Exception:
-        st.info("Graph store empty or not configured.")
 
 
 def render_system_stats():

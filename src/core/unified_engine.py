@@ -4,8 +4,7 @@ Unified RAG Engine for Local Nexus.
 This module orchestrates retrieval from multiple sources:
 - VectorStore (ChromaDB) for unstructured document search
 - Text2SQL (DuckDB) for structured data queries
-- InstitutionalGraph for organizational relationships
-- Hybrid queries combining all sources
+- Hybrid queries combining both sources
 
 Key Features:
 1. Smart Retrieval (Query Decomposition) - breaks complex questions into sub-queries
@@ -47,7 +46,7 @@ class UnifiedEngine:
 
     Features:
     - Query decomposition with LRU caching for complex questions
-    - Multi-source retrieval (VectorStore + DuckDB + Graph)
+    - Multi-source retrieval (VectorStore + DuckDB)
     - Batch vector search for 82% latency reduction
     - Context assembly for LLM response generation
     - Deduplication of retrieved content
@@ -56,7 +55,6 @@ class UnifiedEngine:
         engine = UnifiedEngine(
             vector_store=vs,
             db_connection=conn,
-            graph_store=graph,
             llm_func=my_llm_function
         )
         response = engine.query("What are the total sales?")
@@ -66,7 +64,6 @@ class UnifiedEngine:
         self,
         vector_store=None,
         db_connection=None,
-        graph_store=None,
         llm_func: Optional[Callable[[str], str]] = None,
         enable_decomposition: bool = True,
         max_context_tokens: int = 4000
@@ -77,14 +74,12 @@ class UnifiedEngine:
         Args:
             vector_store: VectorStore instance for document retrieval
             db_connection: DuckDB connection for SQL queries
-            graph_store: InstitutionalGraph for organizational knowledge
             llm_func: Function for LLM calls (prompt: str) -> str
             enable_decomposition: Whether to decompose complex queries
             max_context_tokens: Approximate max tokens for context (chars/4)
         """
         self.vector_store = vector_store
         self.db_connection = db_connection
-        self.graph_store = graph_store
         self.llm_func = llm_func
         self.enable_decomposition = enable_decomposition
         self.max_context_chars = max_context_tokens * 4  # Rough estimate
@@ -282,42 +277,6 @@ If no decomposition needed, return the original question."""
                 metadata={'error': True}
             )]
 
-    def _retrieve_from_graph(self, question: str) -> list[RetrievalResult]:
-        """
-        Retrieve organizational context from the institutional graph.
-
-        Extracts entity names from the question and looks up graph relationships.
-        """
-        if not self.graph_store:
-            return []
-
-        try:
-            # Extract potential entity names (simple heuristic: capitalized words)
-            import re
-            words = question.split()
-            potential_entities = [
-                w.strip('.,?!') for w in words
-                if len(w) > 1 and w[0].isupper()  # Check length FIRST to avoid IndexError
-            ]
-
-            if not potential_entities:
-                return []
-
-            context = self.graph_store.get_context_for_query(potential_entities)
-
-            if context:
-                return [RetrievalResult(
-                    source='graph',
-                    content=f"Organizational Context:\n{context}",
-                    metadata={'entities': potential_entities},
-                    score=0.8
-                )]
-
-            return []
-
-        except Exception:
-            return []
-
     def retrieve(
         self,
         question: str,
@@ -360,11 +319,6 @@ If no decomposition needed, return the original question."""
             vector_results = self._retrieve_from_vector_store(sub_queries, top_k)
             sql_results = self._retrieve_from_sql(question)
             results = vector_results + sql_results
-
-        # Always try to add graph context if available (organizational knowledge)
-        graph_results = self._retrieve_from_graph(question)
-        if graph_results:
-            results = results + graph_results
 
         return query_type, results
 
@@ -496,7 +450,6 @@ ANSWER:"""
             'decomposition_enabled': self.enable_decomposition,
             'has_vector_store': self.vector_store is not None,
             'has_db_connection': self.db_connection is not None,
-            'has_graph_store': self.graph_store is not None,
             'has_llm': self.llm_func is not None,
             'decomposition_cache_info': self.decompose_query.cache_info()._asdict()
         }
@@ -512,13 +465,6 @@ ANSWER:"""
             try:
                 tables = self.text2sql.get_available_tables()
                 stats['available_tables'] = tables
-            except Exception:
-                pass
-
-        if self.graph_store:
-            try:
-                graph_stats = self.graph_store.get_stats()
-                stats['graph_store'] = graph_stats
             except Exception:
                 pass
 

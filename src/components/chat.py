@@ -15,12 +15,6 @@ def get_vector_store():
     return VectorStore(db_path="data/vectordb")
 
 @st.cache_resource
-def get_graph_store():
-    """Cached graph store."""
-    from src.core.graph_store import InstitutionalGraph
-    return InstitutionalGraph(storage_path="data/graph")
-
-@st.cache_resource
 def get_llm_func():
     """Cached LLM function."""
     import google.generativeai as genai
@@ -36,7 +30,7 @@ def get_llm_func():
         return gemini_call
     return None
 
-def get_engine_instance(use_vector: bool, use_db: bool, use_graph: bool, use_llm: bool):
+def get_engine_instance(use_vector: bool, use_db: bool, use_llm: bool):
     """
     Get Unified Engine instance with dynamic component selection.
     
@@ -56,19 +50,11 @@ def get_engine_instance(use_vector: bool, use_db: bool, use_graph: bool, use_llm
             except Exception:
                 pass
             
-        graph_store = None
-        if use_graph:
-            try:
-                graph_store = get_graph_store()
-            except Exception as e:
-                print(f"Graph load error: {e}")
-            
         llm_func = get_llm_func() if use_llm else None
 
         engine = UnifiedEngine(
             vector_store=vector_store,
             db_connection=db_conn,
-            graph_store=graph_store,
             llm_func=llm_func
         )
         return engine
@@ -76,9 +62,9 @@ def get_engine_instance(use_vector: bool, use_db: bool, use_graph: bool, use_llm
         print(f"ERROR: UnifiedEngine initialization failed: {e}")
         return None
 
-def get_unified_engine(use_vector=True, use_db=True, use_graph=True, use_llm=True):
+def get_unified_engine(use_vector=True, use_db=True, use_llm=True):
     """Wrapper to get the engine with specific flags."""
-    return get_engine_instance(use_vector, use_db, use_graph, use_llm)
+    return get_engine_instance(use_vector, use_db, use_llm)
 
 
 def render_chat():
@@ -94,7 +80,6 @@ def render_chat():
     st.sidebar.markdown("### Unified Engine Components")
     use_vector = st.sidebar.toggle("Vector Store (RAG)", value=True, help="Search documents (ChromaDB)")
     use_db = st.sidebar.toggle("Structured Data (SQL)", value=True, help="Query database (DuckDB)")
-    use_graph = st.sidebar.toggle("Relational Data", value=True, help="Network relationships")
     use_llm = st.sidebar.toggle("LLM Synthesis", value=True, help="Generate answers with Gemini")
     
     # Global toggle state (implicitly ON if any component is ON, effectively)
@@ -103,7 +88,7 @@ def render_chat():
     # We can keep a "Mode" switch? 
     # Let's trust the components toggles. If at least one is ON, we use the engine.
     
-    use_unified = use_vector or use_db or use_graph
+    use_unified = use_vector or use_db
 
     # Display chat messages
     for message in st.session_state.messages:
@@ -138,7 +123,6 @@ def render_chat():
                     prompt, 
                     use_vector=use_vector, 
                     use_db=use_db, 
-                    use_graph=use_graph, 
                     use_llm=use_llm
                 )
             else:
@@ -179,9 +163,9 @@ def render_query_badge(query_type: str):
     st.caption(f"Query type: **{label}**")
 
 
-def generate_unified_response(prompt: str, use_vector=True, use_db=True, use_graph=True, use_llm=True) -> dict:
+def generate_unified_response(prompt: str, use_vector=True, use_db=True, use_llm=True) -> dict:
     """Generate response using the Unified Engine."""
-    engine = get_unified_engine(use_vector, use_db, use_graph, use_llm)
+    engine = get_unified_engine(use_vector, use_db, use_llm)
 
     if not engine:
         return {
