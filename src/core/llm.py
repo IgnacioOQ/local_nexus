@@ -1,5 +1,5 @@
 import os
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 
 DEFAULT_MODEL = "gemini-2.0-flash-lite"
@@ -24,7 +24,12 @@ def init_gemini():
         print("Warning: GEMINI_API_KEY not found in secrets or environment.")
         return False
     
-    genai.configure(api_key=api_key)
+    # genai.configure(api_key=api_key) # Deprecated
+    # For google-genai, we instantiate Client with api_key specificially where needed, 
+    # or we could set it potentially, but standard pattern is Client(api_key=...)
+    # We will just ensure the env var is set if we found it in secrets, for convenience.
+    if api_key:
+        os.environ["GEMINI_API_KEY"] = api_key
     return True
 
 def get_gemini_response(messages) -> str:
@@ -37,29 +42,45 @@ def get_gemini_response(messages) -> str:
                          We need to convert formats.
     """
     try:
-        model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", DEFAULT_MODEL))
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+             # Try to find it again if helpful, or rely on init_gemini having run
+             pass
+
+        client = genai.Client(api_key=api_key)
         
-        # Convert Streamlit history to Gemini history
+        # Convert Streamlit history to GenAI history (if needed) or just use generate_content
+        # The new SDK supports chat history nicely.
+        
         # Streamlit: [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
-        # Gemini: [{"role": "user", "parts": ["hi"]}, {"role": "model", "parts": ["hello"]}]
-        gemini_history = []
-        for msg in messages:
+        # New SDK needs contents appropriately.
+        # "role": "user" -> "user"
+        # "role": "assistant" -> "model"
+        
+        # However, for simple generate_content with history, we might want to use chats.
+        
+        # Let's use clean chat history creation
+        # client.chats.create(model=..., history=...)
+        
+        formatted_history = []
+        for msg in messages[:-1]: # All except last
             role = "user" if msg["role"] == "user" else "model"
-            content = msg["content"]
-            gemini_history.append({"role": role, "parts": [content]})
+            formatted_history.append(
+                genai.types.Content(
+                    role=role,
+                    parts=[genai.types.Part.from_text(text=msg["content"])]
+                )
+            )
 
-        # The last message is the current prompt, so we separate it for chat.send_message if we were maintaining a chat object.
-        # However, it's easier to just start a chat with history excluding the last message, then send the last message.
+        # Last message
+        last_content = messages[-1]["content"]
+
+        chat = client.chats.create(
+            model=os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
+            history=formatted_history
+        )
         
-        if not gemini_history:
-            return "Error: No messages to send."
-
-        last_message = gemini_history[-1]
-        history = gemini_history[:-1]
-
-        chat = model.start_chat(history=history)
-        response = chat.send_message(last_message["parts"][0])
-        
+        response = chat.send_message(last_content)
         return response.text
     except Exception as e:
         return f"Error communicating with Gemini: {str(e)}"

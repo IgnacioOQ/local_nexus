@@ -17,15 +17,20 @@ def get_vector_store():
 @st.cache_resource
 def get_llm_func():
     """Cached LLM function."""
-    import google.generativeai as genai
+    import google.generativeai as genai # Remove this
+    from google import genai
     from src.core.llm import init_gemini, DEFAULT_MODEL
     import os
     
     if init_gemini():
         def gemini_call(prompt: str) -> str:
+            api_key = os.getenv("GEMINI_API_KEY")
+            client = genai.Client(api_key=api_key)
             model_name = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
             return response.text
         return gemini_call
     return None

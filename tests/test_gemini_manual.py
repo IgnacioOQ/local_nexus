@@ -1,5 +1,6 @@
-import google.generativeai as genai
+from google import genai
 from src.core.llm import init_gemini, get_gemini_response
+import os
 
 def test_gemini_connection():
     print("Initializing Gemini...")
@@ -9,9 +10,10 @@ def test_gemini_connection():
 
     print("Listing available models...")
     try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                print(m.name)
+        api_key = os.getenv("GEMINI_API_KEY")
+        client = genai.Client(api_key=api_key)
+        for m in client.models.list():
+            print(m.name)
     except Exception as e:
         print(f"Error listing models: {e}")
 
